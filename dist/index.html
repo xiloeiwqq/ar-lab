@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10101a">
+  <meta name="description" content="Интерактивная химическая лаборатория. Смешивайте реагенты и наблюдайте за реакциями в 3D и WebXR.">
+  <title>ХимЛаб — виртуальная лаборатория</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">{"imports":{"three":"./vendor/three.js"}}</script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#lab" aria-label="ХимЛаб, лаборатория"><span class="brand-icon" data-icon="flask"></span><span>Хим<span class="accent">Лаб</span></span></a>
+      <nav aria-label="Разделы сайта">
+        <a href="#lab" class="nav-link" data-nav="lab"><span data-icon="flask"></span>Лаборатория</a>
+        <a href="#experiments" class="nav-link" data-nav="experiments"><span data-icon="layers"></span>Опыты</a>
+        <a href="#journal" class="nav-link" data-nav="journal"><span data-icon="book"></span>Журнал</a>
+      </nav>
+      <button class="icon-button help-button" type="button" aria-label="Как пользоваться лабораторией" title="Как пользоваться" data-open-help><span data-icon="help"></span></button>
+    </div>
+  </header>
+  <main class="shell">
+    <section id="lab" class="view" aria-labelledby="lab-title">
+      <div class="intro">
+        <div>
+          <h1 id="lab-title">Виртуальная <span class="accent">лаборатория</span></h1>
+          <p>Смешивайте вещества и наблюдайте, как протекают химические реакции.</p>
+        </div>
+        <button class="button ar-button" id="open-ar" type="button"><span data-icon="scan"></span>Открыть в AR</button>
+      </div>
+      <div class="workspace">
+        <aside class="panel reagents" aria-labelledby="reagents-title">
+          <div class="panel-heading"><span class="heading-icon" data-icon="droplet"></span><h2 id="reagents-title">Реагенты</h2><span class="count" id="reagent-count"></span></div>
+          <p class="muted panel-caption">Выберите два вещества</p>
+          <div class="reagent-list" id="reagents"></div>
+        </aside>
+        <section class="stage" id="stage" aria-label="Интерактивная 3D-сцена">
+          <video id="camera-feed" playsinline muted hidden></video>
+          <div class="stage-grid" aria-hidden="true"></div>
+          <div class="stage-glow" aria-hidden="true"></div>
+          <div class="canvas-wrap" id="canvas-wrap"></div>
+          <div class="stage-status"><span class="status-dot"></span><span id="stage-status">3D-сцена</span></div>
+          <div class="stage-tools">
+            <button type="button" class="icon-button" id="reset-view" title="Вернуть исходный ракурс" aria-label="Вернуть исходный ракурс"><span data-icon="focus"></span></button>
+            <button type="button" class="icon-button" id="fullscreen" title="Развернуть сцену" aria-label="Развернуть сцену"><span data-icon="expand"></span></button>
+          </div>
+          <div class="stage-empty" id="stage-error" role="status" hidden><span data-icon="flask"></span><p>3D-сцена недоступна в этом браузере.</p></div>
+          <div class="stage-controls">
+            <label class="model-picker"><span data-icon="flask"></span><select id="vessel" aria-label="Выбрать колбу"><option value="simulation">Колба Эрленмейера</option><option value="erlenmeyer">Эрленмейер · CC0</option><option value="round">Круглодонная · CC0</option></select><span data-icon="chevron"></span></label>
+            <span class="stage-hint" id="stage-hint"><span data-icon="rotate"></span>Потяните, чтобы повернуть</span>
+            <button type="button" class="button small" id="close-camera" hidden>Закрыть камеру</button>
+          </div>
+          <div class="sr-only" id="stage-live" aria-live="polite"></div>
+        </section>
+        <aside class="panel mixing" aria-labelledby="mix-title">
+          <div class="panel-heading"><span class="heading-icon" data-icon="blend"></span><h2 id="mix-title">Смешивание</h2></div>
+          <p class="muted panel-caption">Добавьте реагенты в колбу</p>
+          <div id="slots" class="slots"></div>
+          <button type="button" id="mix" class="button primary" disabled><span data-icon="flask"></span>Смешать реагенты</button>
+          <div class="result" id="result" aria-live="polite"></div>
+        </aside>
+      </div>
+      <section class="quick-section" aria-labelledby="quick-title">
+        <div class="section-heading"><div><h2 id="quick-title">Готовые опыты</h2><p class="muted">Выберите опыт, чтобы сразу загрузить реагенты</p></div><a href="#experiments" class="button secondary"><span data-icon="layers"></span>Все опыты</a></div>
+        <div class="experiment-grid" id="quick-experiments"></div>
+      </section>
+    </section>
+    <section id="experiments" class="view" aria-labelledby="experiments-title" hidden>
+      <div class="intro"><div><h1 id="experiments-title">Каталог <span class="accent">опытов</span></h1><p>Изучайте признаки химических реакций и свойства растворов.</p></div></div>
+      <div class="experiment-grid" id="catalog"></div>
+    </section>
+    <section id="journal" class="view" aria-labelledby="journal-title" hidden>
+      <div class="intro"><div><h1 id="journal-title">Журнал <span class="accent">наблюдений</span></h1><p>Завершённые опыты сохраняются в этом браузере.</p></div></div>
+      <div id="journal-list" class="journal-list"></div>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="shell footer-inner"><span>ХимЛаб · учебный симулятор</span><button type="button" class="text-button" data-open-help>Справка и источники</button></div></footer>
+  <dialog id="help">
+    <div class="dialog-heading"><h2>Как пользоваться</h2><form method="dialog"><button class="icon-button" aria-label="Закрыть"><span data-icon="close"></span></button></form></div>
+    <ol><li>Выберите два реагента или откройте готовый опыт.</li><li>Нажмите «Смешать реагенты» и наблюдайте, что происходит в колбе.</li><li>Для размещения колбы на поверхности откройте AR на устройстве с поддержкой WebXR. В других браузерах можно включить наложение на камеру.</li></ol>
+    <p class="muted">Симуляция показывает типичные признаки реакций. Она не рассчитывает концентрации, выход продуктов или скорость реакции. Оттенки реагентов в списке служат для навигации.</p>
+    <h3>Источники</h3>
+    <ul id="sources"></ul>
+  </dialog>
+  <div class="xr-overlay" id="xr-overlay" hidden>
+    <div class="xr-top"><strong><span data-icon="scan"></span> ХимЛаб AR</strong><button class="icon-button" type="button" id="xr-close" aria-label="Выйти из AR"><span data-icon="close"></span></button></div>
+    <div class="xr-bottom">
+      <p id="xr-instruction" role="status">Наведите камеру на поверхность и коснитесь экрана.</p>
+      <div id="xr-slots" class="xr-slots"></div>
+      <p id="xr-result" aria-live="polite"></p>
+      <button class="button primary" type="button" id="xr-mix" disabled><span data-icon="flask"></span>Смешать реагенты</button>
+    </div>
+  </div>
+</body>
+</html>
+
+
