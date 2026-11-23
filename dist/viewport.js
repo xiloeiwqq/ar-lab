@@ -345,7 +345,9 @@ export function createViewport(container, stage, reducedMotion) {
     const { width, height } = container.getBoundingClientRect();
     if (width < 1 || height < 1 || renderer.xr.isPresenting) return;
     camera.aspect = width / height;
-    camera.fov = camera.aspect < 1 ? 40 : 33;
+    // Keep wide vessels in frame when the stage fills a tall phone screen.
+    const portraitFov = 2 * Math.atan(Math.tan(T.MathUtils.degToRad(14)) / camera.aspect);
+    camera.fov = camera.aspect < 1 ? Math.max(40, T.MathUtils.radToDeg(portraitFov)) : 33;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
   }

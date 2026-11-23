@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#10101a">
   <meta name="description" content="Интерактивная химическая лаборатория. Смешивайте реагенты и наблюдайте за реакциями в 3D и WebXR.">
   <title>ХимЛаб — виртуальная лаборатория</title>
@@ -33,7 +33,7 @@
         <button class="button ar-button" id="open-ar" type="button"><span data-icon="scan"></span>Открыть в AR</button>
       </div>
       <div class="workspace">
-        <aside class="panel reagents" aria-labelledby="reagents-title">
+        <aside class="panel reagents" id="reagent-panel" aria-labelledby="reagents-title">
           <div class="panel-heading"><span class="heading-icon" data-icon="droplet"></span><h2 id="reagents-title">Реагенты</h2><span class="count" id="reagent-count"></span></div>
           <p class="muted panel-caption">Выберите два вещества</p>
           <div class="reagent-list" id="reagents"></div>
@@ -44,24 +44,24 @@
           <div class="stage-glow" aria-hidden="true"></div>
           <div class="canvas-wrap" id="canvas-wrap"></div>
           <div class="stage-status"><span class="status-dot"></span><span id="stage-status">3D-сцена</span></div>
-          <div class="stage-tools">
+          <div class="stage-tools" id="stage-tools">
             <button type="button" class="icon-button" id="reset-view" title="Вернуть исходный ракурс" aria-label="Вернуть исходный ракурс"><span data-icon="focus"></span></button>
             <button type="button" class="icon-button" id="fullscreen" title="Развернуть сцену" aria-label="Развернуть сцену"><span data-icon="expand"></span></button>
           </div>
           <div class="stage-empty" id="stage-error" role="status" hidden><span data-icon="flask"></span><p>3D-сцена недоступна в этом браузере.</p></div>
-          <div class="stage-controls">
+          <div class="stage-controls" id="stage-controls">
             <label class="model-picker"><span data-icon="flask"></span><select id="vessel" aria-label="Выбрать колбу"><option value="simulation">Колба Эрленмейера</option><option value="erlenmeyer">Эрленмейер · CC0</option><option value="round">Круглодонная · CC0</option></select><span data-icon="chevron"></span></label>
             <span class="stage-hint" id="stage-hint"><span data-icon="rotate"></span>Потяните, чтобы повернуть</span>
             <button type="button" class="button small" id="close-camera" hidden>Закрыть камеру</button>
           </div>
           <div class="sr-only" id="stage-live" aria-live="polite"></div>
         </section>
-        <aside class="panel mixing" aria-labelledby="mix-title">
+        <aside class="panel mixing" id="mix-panel" aria-labelledby="mix-title">
           <div class="panel-heading"><span class="heading-icon" data-icon="blend"></span><h2 id="mix-title">Смешивание</h2></div>
           <p class="muted panel-caption">Добавьте реагенты в колбу</p>
           <div id="slots" class="slots"></div>
           <button type="button" id="mix" class="button primary" disabled><span data-icon="flask"></span>Смешать реагенты</button>
-          <div class="result" id="result" aria-live="polite"></div>
+          <div class="result" id="result" aria-live="polite" tabindex="-1"></div>
         </aside>
       </div>
       <section class="quick-section" aria-labelledby="quick-title">
@@ -79,6 +79,30 @@
     </section>
   </main>
   <footer class="site-footer"><div class="shell footer-inner"><span>ХимЛаб · учебный симулятор</span><button type="button" class="text-button" data-open-help>Справка и источники</button></div></footer>
+  <div class="mobile-dock" id="mobile-dock">
+    <div class="mobile-scrim" id="mobile-scrim" hidden aria-hidden="true"></div>
+    <div class="mobile-tray">
+      <div class="mobile-menu" id="mobile-menu" hidden>
+        <nav class="mobile-actions" aria-label="Меню лаборатории">
+          <a class="button secondary" href="#lab" id="mobile-lab"><span data-icon="flask"></span>Лаборатория</a>
+          <button type="button" class="button secondary" data-mobile-pane="mobile-bench" aria-controls="mobile-bench" aria-expanded="false"><span data-icon="droplet"></span>Реагенты</button>
+          <button type="button" class="button secondary" data-mobile-pane="mobile-experiments" aria-controls="mobile-experiments" aria-expanded="false"><span data-icon="layers"></span>Опыты</button>
+          <button type="button" class="button secondary" data-mobile-pane="mobile-journal" aria-controls="mobile-journal" aria-expanded="false"><span data-icon="book"></span>Журнал</button>
+          <button type="button" class="button secondary" data-mobile-pane="mobile-scene" aria-controls="mobile-scene" aria-expanded="false"><span data-icon="focus"></span>Сцена</button>
+          <button type="button" class="button secondary" data-open-help><span data-icon="help"></span>Справка</button>
+        </nav>
+        <div class="mobile-pane" id="mobile-bench" hidden></div>
+        <div class="mobile-pane" id="mobile-scene" hidden></div>
+        <div class="mobile-pane" id="mobile-experiments" hidden></div>
+        <div class="mobile-pane" id="mobile-journal" hidden></div>
+      </div>
+      <div class="mobile-bar">
+        <button type="button" class="button secondary" id="mobile-camera"><span data-icon="camera"></span><span>Камера</span></button>
+        <button type="button" class="button secondary" id="mobile-result" aria-controls="mobile-bench" hidden><span data-icon="observation"></span>Результат</button>
+        <button type="button" class="button primary" id="mobile-toggle" aria-controls="mobile-menu" aria-expanded="false"><span data-icon="menu"></span><span>Меню</span></button>
+      </div>
+    </div>
+  </div>
   <dialog id="help">
     <div class="dialog-heading"><h2>Как пользоваться</h2><form method="dialog"><button class="icon-button" aria-label="Закрыть"><span data-icon="close"></span></button></form></div>
     <ol><li>Выберите два реагента или откройте готовый опыт.</li><li>Нажмите «Смешать реагенты» и наблюдайте, что происходит в колбе.</li><li>Для размещения колбы на поверхности откройте AR на устройстве с поддержкой WebXR. В других браузерах можно включить наложение на камеру.</li></ol>
@@ -90,9 +114,12 @@
     <div class="xr-top"><strong><span data-icon="scan"></span> ХимЛаб AR</strong><button class="icon-button" type="button" id="xr-close" aria-label="Выйти из AR"><span data-icon="close"></span></button></div>
     <div class="xr-bottom">
       <p id="xr-instruction" role="status">Наведите камеру на поверхность и коснитесь экрана.</p>
-      <div id="xr-slots" class="xr-slots"></div>
-      <p id="xr-result" aria-live="polite"></p>
-      <button class="button primary" type="button" id="xr-mix" disabled><span data-icon="flask"></span>Смешать реагенты</button>
+      <div id="xr-actions" class="xr-actions">
+        <div id="xr-slots" class="xr-slots"></div>
+        <p id="xr-result" aria-live="polite"></p>
+        <button class="button primary" type="button" id="xr-mix" disabled><span data-icon="flask"></span>Смешать реагенты</button>
+      </div>
+      <button class="button primary" type="button" id="xr-toggle" aria-controls="xr-actions" aria-expanded="false"><span data-icon="menu"></span><span>Меню</span></button>
     </div>
   </div>
 </body>

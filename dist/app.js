@@ -6,6 +6,8 @@ const icons = {
   book: '<path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1 0-4h13M8 7h7m-7 4h5"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9.4a2.9 2.9 0 0 1 5.7.6c0 2-2.8 2.4-2.8 4m0 2.7v.1"/>',
   scan: '<path d="M3 8V5a2 2 0 0 1 2-2h3m8 0h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3m-8 0H5a2 2 0 0 1-2-2v-3m9-9 4 2.5v5L12 17l-4-2.5v-5L12 7Zm-4 2.5 4 2.5 4-2.5M12 12v5"/>',
+  camera: '<rect x="3" y="6" width="18" height="14" rx="2"/><path d="m8 6 2-3h4l2 3"/><circle cx="12" cy="13" r="3"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   droplet: '<path d="M12 3C9 7.5 6 10 6 14a6 6 0 0 0 12 0c0-4-3-6.5-6-11Zm-3 11a3 3 0 0 0 3 3"/>',
   blend: '<path d="M5 5h14m-7 0v6m-6 2 2 7h8l2-7H6Zm3 3h6"/><path d="M9 8 7 6m8 2 2-2"/>',
   focus: '<circle cx="12" cy="12" r="5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
@@ -31,6 +33,7 @@ function svg(name) {
 document.querySelectorAll('[data-icon]').forEach((node) => { node.innerHTML = svg(node.dataset.icon); });
 const library = Object.entries(reagents);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const mobileLayout = matchMedia('(max-width: 760px), (pointer: coarse) and (max-width: 960px) and (max-height: 540px)');
 const storageKey = 'chem-lab-journal-v1';
 let selected = [null, null];
 let result = null;
@@ -41,6 +44,9 @@ let xrSupport = false;
 let xrPlaced = false;
 let busyAR = false;
 let stream;
+let cameraRequest = 0;
+let cameraPending = false;
+let resumeCameraAfterXR = false;
 let vesselRequest = 0;
 let currentPage;
 
@@ -49,6 +55,93 @@ const list = $('reagents');
 const stage = $('stage');
 const feed = $('camera-feed');
 const overlay = $('xr-overlay');
+const mobileMenu = $('mobile-menu');
+const mobileToggle = $('mobile-toggle');
+const mobilePanes = [...document.querySelectorAll('[data-mobile-pane]')];
+const mobileControls = [
+  ['reagent-panel', 'mobile-bench'],
+  ['mix-panel', 'mobile-bench'],
+  ['stage-tools', 'mobile-scene'],
+  ['stage-controls', 'mobile-scene'],
+  ['open-ar', 'mobile-scene'],
+  ['catalog', 'mobile-experiments'],
+  ['journal-list', 'mobile-journal'],
+].map(([id, destination]) => {
+  const element = $(id);
+  const anchor = document.createComment(id);
+  element.before(anchor);
+  return { element, anchor, destination: $(destination) };
+});
+
+function setMobilePane(id) {
+  if (id === 'mobile-journal') renderJournal();
+  for (const button of mobilePanes) {
+    const active = button.dataset.mobilePane === id;
+    button.setAttribute('aria-expanded', String(active));
+    $(button.dataset.mobilePane).hidden = !active;
+  }
+  mobileMenu.scrollTop = 0;
+}
+
+function setMobileMenu(open, restoreFocus = false) {
+  mobileMenu.hidden = !open;
+  $('mobile-scrim').hidden = !open;
+  mobileToggle.setAttribute('aria-expanded', String(open));
+  mobileToggle.querySelector('[data-icon]').innerHTML = svg(open ? 'close' : 'menu');
+  mobileToggle.lastElementChild.textContent = open ? 'Закрыть' : 'Меню';
+  if (!open) setMobilePane(null);
+  if (restoreFocus) mobileToggle.focus({ preventScroll: true });
+}
+
+function updateMobileActions() {
+  const inLab = currentPage === 'lab';
+  $('mobile-lab').hidden = inLab;
+  for (const button of mobilePanes) button.hidden = !inLab;
+  $('mobile-camera').hidden = !inLab || !feed.hidden;
+  $('mobile-camera').disabled = cameraPending;
+  $('mobile-result').hidden = !inLab || !result;
+  $('open-ar').hidden = mobileLayout.matches && !feed.hidden && !xrSupport;
+}
+
+function placeMobileControls() {
+  for (const { element, anchor, destination } of mobileControls) {
+    if (mobileLayout.matches && currentPage === 'lab') {
+      if (element.parentNode !== destination) destination.append(element);
+    } else if (anchor.nextSibling !== element) {
+      anchor.after(element);
+    }
+  }
+}
+
+function updateLayout() {
+  placeMobileControls();
+  setMobileMenu(false);
+  setXRMenu(false);
+  updateFullScreenButton();
+  updateMobileActions();
+}
+
+mobileToggle.addEventListener('click', () => {
+  const open = mobileMenu.hidden;
+  setMobileMenu(open);
+  if (open) mobileMenu.querySelector('.mobile-actions > :not([hidden])')?.focus({ preventScroll: true });
+});
+$('mobile-scrim').addEventListener('click', () => setMobileMenu(false, true));
+for (const button of mobilePanes) {
+  button.addEventListener('click', () => {
+    setMobilePane($(button.dataset.mobilePane).hidden ? button.dataset.mobilePane : null);
+  });
+}
+for (const link of mobileMenu.querySelectorAll('a')) {
+  link.addEventListener('click', () => setMobileMenu(false, true));
+}
+$('mobile-result').addEventListener('click', () => {
+  setMobileMenu(true);
+  setMobilePane('mobile-bench');
+  $('result').focus({ preventScroll: true });
+  $('result').scrollIntoView({ block: 'nearest' });
+});
+mobileLayout.addEventListener('change', updateLayout);
 
 function badge(reagent) {
   return `<span class="reagent-symbol" style="--tone:${reagent.tone}">${icon(reagent.icon)}</span>`;
@@ -125,6 +218,7 @@ function renderBench() {
   }
   $('result').innerHTML = `<div class="result-label">${icon('observation')}Наблюдения</div>${result ? resultMarkup(result) : `<p class="result-description">${mixing ? 'Наблюдайте за изменениями в колбе.' : 'Здесь появятся результат и описание реакции.'}</p>`}`;
   $('xr-result').textContent = result ? [result.type || result.title, result.equation || result.description].join(' · ') : '';
+  updateMobileActions();
 }
 function resultMarkup(item) {
   return `<h3>${item.type || item.title}</h3>${item.equation ? `<p class="equation">${item.equation}</p>` : ''}<p class="result-description">${item.description}</p>${item.source ? `<a class="result-source" href="${item.source}" target="_blank" rel="noopener noreferrer">Источник опыта</a>` : ''}`;
@@ -134,6 +228,7 @@ function mix() {
   const reaction = findExperiment(selected);
   result = null;
   mixing = true;
+  if (mobileLayout.matches && overlay.hidden) setMobileMenu(false, true);
   renderBench();
   viewport?.setMixture(selected);
   viewport?.startReaction(reaction);
@@ -159,6 +254,10 @@ function renderCards(id, items) {
       resetMixture();
       if (location.hash !== '#lab') location.hash = 'lab';
       showPage();
+      if (mobileLayout.matches) {
+        setMobileMenu(true);
+        setMobilePane('mobile-bench');
+      }
       $('mix').focus({ preventScroll: true });
       $('mix').scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'instant' : 'smooth' });
     });
@@ -179,7 +278,7 @@ function record(item) {
   history.unshift({ id: item.id, time: Date.now() });
   history = history.slice(0, 50);
   try { localStorage.setItem(storageKey, JSON.stringify(history)); } catch { /* Keep the in-memory entry. */ }
-  if (currentPage === 'journal') renderJournal();
+  if (currentPage === 'journal' || (mobileLayout.matches && !$('mobile-journal').hidden)) renderJournal();
 }
 function renderJournal() {
   $('journal-list').replaceChildren(...history.map(({ id, time }) => {
@@ -196,9 +295,12 @@ function showPage() {
   const hash = location.hash.slice(1);
   const page = views.includes(hash) ? hash : 'lab';
   if (currentPage === page) return;
-  if (currentPage === 'lab' && stream) closeCamera();
+  if (currentPage === 'lab') closeCamera();
   currentPage = page;
   for (const view of views) $(view).hidden = view !== page;
+  placeMobileControls();
+  setMobileMenu(false);
+  updateMobileActions();
   document.querySelectorAll('[data-nav]').forEach((nav) => {
     if (nav.dataset.nav === page) nav.setAttribute('aria-current', 'page');
     else nav.removeAttribute('aria-current');
@@ -209,7 +311,10 @@ function showPage() {
 window.addEventListener('hashchange', showPage);
 showPage();
 
-document.querySelectorAll('[data-open-help]').forEach((button) => button.addEventListener('click', () => $('help').showModal()));
+document.querySelectorAll('[data-open-help]').forEach((button) => button.addEventListener('click', () => {
+  if (mobileMenu.contains(button)) setMobileMenu(false, true);
+  $('help').showModal();
+}));
 $('sources').innerHTML = [
   ['American Chemical Society · газ и осадок', links.gasAndSolid],
   ['American Chemical Society · лимонная кислота', links.citric],
@@ -240,31 +345,43 @@ async function changeVessel() {
   }
 }
 $('vessel').addEventListener('change', changeVessel);
-$('reset-view').addEventListener('click', () => viewport?.resetView());
+$('reset-view').addEventListener('click', () => {
+  viewport?.resetView();
+  if (mobileLayout.matches) setMobileMenu(false, true);
+});
 $('fullscreen').addEventListener('click', async () => {
-  if (document.fullscreenElement === stage) {
+  const target = mobileLayout.matches ? document.documentElement : stage;
+  if (document.fullscreenElement) {
     await document.exitFullscreen();
   } else if (stage.classList.contains('expanded')) {
     stage.classList.remove('expanded');
     updateFullScreenButton();
   } else {
     try {
-      if (!stage.requestFullscreen) throw new Error('Fullscreen API unavailable');
-      await stage.requestFullscreen();
+      if (!target.requestFullscreen) throw new Error('Fullscreen API unavailable');
+      await target.requestFullscreen();
     } catch {
-      stage.classList.add('expanded');
-      updateFullScreenButton();
+      if (!mobileLayout.matches) {
+        stage.classList.add('expanded');
+        updateFullScreenButton();
+      }
     }
   }
+  if (mobileLayout.matches) setMobileMenu(false, true);
 });
 function updateFullScreenButton() {
-  const label = document.fullscreenElement === stage || stage.classList.contains('expanded') ? 'Свернуть сцену' : 'Развернуть сцену';
+  const label = document.fullscreenElement || stage.classList.contains('expanded') ? 'Свернуть сцену' : 'Развернуть сцену';
   $('fullscreen').title = label;
   $('fullscreen').setAttribute('aria-label', label);
+  $('fullscreen').hidden = mobileLayout.matches && !document.fullscreenEnabled;
 }
 document.addEventListener('fullscreenchange', updateFullScreenButton);
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape') return;
+  if (event.key !== 'Escape' || $('help').open) return;
+  if (!mobileMenu.hidden) {
+    setMobileMenu(false, true);
+    return;
+  }
   if (stage.classList.contains('expanded')) {
     stage.classList.remove('expanded');
     updateFullScreenButton();
@@ -272,6 +389,8 @@ document.addEventListener('keydown', (event) => {
 });
 
 function closeCamera() {
+  cameraRequest++;
+  cameraPending = false;
   for (const track of stream?.getTracks() ?? []) track.stop();
   stream = null;
   feed.srcObject = null;
@@ -280,15 +399,21 @@ function closeCamera() {
   $('close-camera').hidden = true;
   viewport?.cameraMode(false);
   stageMessage('3D-сцена');
+  updateMobileActions();
 }
 async function showCamera() {
+  if (cameraPending || stream || currentPage !== 'lab') return;
   if (!navigator.mediaDevices?.getUserMedia) {
     stageMessage('Камера доступна на HTTPS или localhost');
     return;
   }
+  const request = ++cameraRequest;
+  cameraPending = true;
+  updateMobileActions();
+  stageMessage('Включение камеры…');
   try {
     const camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-    if (currentPage !== 'lab') {
+    if (request !== cameraRequest) {
       camera.getTracks().forEach((track) => track.stop());
       return;
     }
@@ -299,40 +424,73 @@ async function showCamera() {
     feed.hidden = false;
     stage.classList.add('camera-mode');
     $('close-camera').hidden = false;
-    viewport.cameraMode(true);
+    viewport?.cameraMode(true);
     stageMessage('Наложение на камеру');
-    stage.scrollIntoView({ block: 'nearest' });
+    if (document.activeElement === $('mobile-camera')) mobileToggle.focus({ preventScroll: true });
+    if (!mobileLayout.matches) stage.scrollIntoView({ block: 'nearest' });
   } catch (error) {
+    if (request !== cameraRequest) return;
     closeCamera();
     stageMessage(error.name === 'NotAllowedError' ? 'Нет доступа к камере' : 'Камера недоступна');
+  } finally {
+    if (request === cameraRequest) {
+      cameraPending = false;
+      updateMobileActions();
+    }
   }
 }
-$('close-camera').addEventListener('click', closeCamera);
+$('mobile-camera').addEventListener('click', () => void showCamera());
+$('close-camera').addEventListener('click', () => {
+  closeCamera();
+  if (mobileLayout.matches) setMobileMenu(false, true);
+});
 window.addEventListener('pagehide', closeCamera);
+function setXRMenu(open) {
+  $('xr-actions').hidden = mobileLayout.matches && !open;
+  $('xr-toggle').setAttribute('aria-expanded', String(open));
+  $('xr-toggle').querySelector('[data-icon]').innerHTML = svg(open ? 'close' : 'menu');
+  $('xr-toggle').lastElementChild.textContent = open ? 'Закрыть' : 'Меню';
+}
+$('xr-toggle').addEventListener('click', () => setXRMenu($('xr-actions').hidden));
 function onXRState(state) {
   xrPlaced = state === 'placed';
   $('xr-instruction').textContent = xrPlaced
     ? 'Выберите реагенты и запустите опыт.'
     : 'Наведите камеру на поверхность и коснитесь экрана.';
-  if (state === 'ended') overlay.hidden = true;
+  if (state === 'ended') {
+    overlay.hidden = true;
+    setXRMenu(false);
+    if (mobileLayout.matches) mobileToggle.focus({ preventScroll: true });
+    if (resumeCameraAfterXR) {
+      resumeCameraAfterXR = false;
+      void showCamera();
+    }
+  }
   renderBench();
 }
 $('open-ar').addEventListener('click', async () => {
-  if (busyAR || !viewport) return;
+  if (busyAR || cameraPending || !viewport) return;
+  if (mobileLayout.matches) setMobileMenu(false, true);
   busyAR = true;
   try {
-    if (stream) {
-      stage.scrollIntoView({ block: 'nearest' });
-    } else if (xrSupport) {
+    if (xrSupport) {
+      const restoreCamera = Boolean(stream);
+      if (restoreCamera) closeCamera();
       overlay.hidden = false;
       onXRState('scanning');
       try {
         await viewport.startXR(overlay, onXRState);
+        resumeCameraAfterXR = restoreCamera && !overlay.hidden;
       } catch (error) {
         onXRState('ended');
-        if (error.name === 'NotAllowedError' || error.name === 'SecurityError') stageMessage('Запуск AR не разрешён');
+        if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+          if (restoreCamera) await showCamera();
+          stageMessage('Запуск AR не разрешён');
+        }
         else await showCamera();
       }
+    } else if (stream) {
+      if (!mobileLayout.matches) stage.scrollIntoView({ block: 'nearest' });
     } else {
       await showCamera();
     }
@@ -345,15 +503,22 @@ overlay.addEventListener('beforexrselect', (event) => {
   if (event.target.closest('button, select, .xr-bottom')) event.preventDefault();
 });
 
+updateLayout();
+if (mobileLayout.matches && currentPage === 'lab') void showCamera();
+
 try {
   const { createViewport } = await import('./viewport.js');
   viewport = createViewport($('canvas-wrap'), stage, reducedMotion);
   viewport.setMixture(selected);
+  viewport.cameraMode(!feed.hidden);
   if ($('vessel').value !== 'simulation') void changeVessel();
-  navigator.xr?.isSessionSupported('immersive-ar').then((supported) => { xrSupport = supported; }).catch(() => {});
+  navigator.xr?.isSessionSupported('immersive-ar').then((supported) => {
+    xrSupport = supported;
+    updateMobileActions();
+  }).catch(() => {});
 } catch (error) {
   console.error(error);
-  stageMessage('WebGL недоступен');
+  if (feed.hidden && !cameraPending) stageMessage('WebGL недоступен');
   $('stage-error').hidden = false;
   for (const id of ['vessel', 'open-ar', 'reset-view', 'fullscreen']) $(id).disabled = true;
 }
