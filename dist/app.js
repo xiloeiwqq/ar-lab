@@ -57,6 +57,8 @@ const feed = $('camera-feed');
 const overlay = $('xr-overlay');
 const mobileMenu = $('mobile-menu');
 const mobileToggle = $('mobile-toggle');
+const quickLookLinks = [$('open-quick-look'), $('mobile-quick-look')];
+const quickLook = navigator.maxTouchPoints > 0 && quickLookLinks[0].relList.supports('ar');
 const mobilePanes = [...document.querySelectorAll('[data-mobile-pane]')];
 const mobileControls = [
   ['reagent-panel', 'mobile-bench'],
@@ -99,7 +101,8 @@ function updateMobileActions() {
   $('mobile-camera').hidden = !inLab || !feed.hidden;
   $('mobile-camera').disabled = cameraPending;
   $('mobile-result').hidden = !inLab || !result;
-  $('mobile-ar').hidden = !inLab;
+  $('mobile-ar').hidden = !inLab || quickLook;
+  $('mobile-quick-look').hidden = !inLab || !quickLook;
 }
 
 function placeMobileControls() {
@@ -329,11 +332,12 @@ function stageMessage(message) {
 }
 function sceneStatus() {
   if (feed.hidden) return '3D-сцена';
-  return xrSupport === false ? 'Камера · размещение AR недоступно' : 'Камера';
+  return xrSupport === false && !quickLook ? 'Камера · размещение AR недоступно' : 'Камера';
 }
 async function changeVessel() {
   const request = ++vesselRequest;
   const id = $('vessel').value;
+  if (quickLook) updateQuickLookModel();
   if (!viewport) return;
   try {
     if (id !== 'simulation') stageMessage('Загрузка модели…');
@@ -342,6 +346,7 @@ async function changeVessel() {
   } catch (error) {
     if (request !== vesselRequest) return;
     $('vessel').value = 'simulation';
+    if (quickLook) updateQuickLookModel();
     await viewport.selectVessel('simulation', () => true);
     stageMessage('Не удалось загрузить модель');
     console.error(error);
@@ -509,6 +514,24 @@ async function openAR() {
 }
 $('open-ar').addEventListener('click', openAR);
 $('mobile-ar').addEventListener('click', openAR);
+
+function updateQuickLookModel() {
+  const file = `assets/${$('vessel').value}.usdz`;
+  for (const link of quickLookLinks) link.setAttribute('href', file);
+}
+
+if (quickLook) {
+  $('open-ar').hidden = true;
+  $('open-quick-look').hidden = false;
+  $('help-ar').textContent = 'Нажмите «Поставить колбу», выберите «AR» в окне Safari и наведите камеру на стол. Чтобы смешать реагенты, закройте просмотр и вернитесь в лабораторию.';
+  updateQuickLookModel();
+  for (const link of quickLookLinks) {
+    link.addEventListener('click', () => {
+      if (stream || cameraPending) closeCamera();
+    });
+  }
+}
+
 $('xr-close').addEventListener('click', () => viewport?.endXR());
 overlay.addEventListener('beforexrselect', (event) => {
   if (event.target.closest('button, select, .xr-bottom')) event.preventDefault();

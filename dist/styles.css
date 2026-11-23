@@ -35,6 +35,8 @@ nav{display:flex;align-items:center;gap:6px}
 .intro p{margin-top:10px;color:var(--muted);line-height:1.55}
 .button{display:inline-flex;gap:9px;align-items:center;justify-content:center;border-radius:10px;padding:10px 15px;min-height:42px;font-size:.875rem;font-weight:800;white-space:nowrap;border:1px solid transparent;transition:background .16s,border-color .16s,color .16s;color:var(--text)}
 .button svg{width:17px;height:17px}
+.quick-look-link img{width:17px;height:17px}
+.quick-look-link::after{content:attr(aria-label)}
 .ar-button{border-color:#63875a;background:#253629;color:var(--accent);min-height:46px;box-shadow:0 0 22px #9ef3800d}
 .ar-button:hover,.secondary:hover{background:#344735;border-color:#8db783}
 .workspace{display:grid;grid-template-columns:minmax(222px,.91fr) minmax(0,2.19fr) minmax(251px,1.01fr);align-items:stretch;gap:15px}
@@ -234,7 +236,7 @@ dialog a{color:var(--violet);text-decoration:underline}
     box-shadow:0 8px 24px #09081270;
     pointer-events:auto;
   }
-  .mobile-menu:not([hidden])+.mobile-bar>button:not(#mobile-toggle){display:none}
+  .mobile-menu:not([hidden])+.mobile-bar>:not(#mobile-toggle){display:none}
   .mobile-bar .button{padding-inline:11px}
   .mobile-bar .button,.mobile-actions .button,.mobile-pane .button,#xr-toggle{min-height:44px}
   .mobile-pane{display:grid;gap:8px;margin-top:10px}
