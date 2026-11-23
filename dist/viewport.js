@@ -356,6 +356,16 @@ export function createViewport(container, stage, reducedMotion) {
   const markerRight = new T.Vector3();
   const markerUp = new T.Vector3();
   const markerDown = new T.Vector3();
+  const tableOrigin = new T.Vector3();
+  const vesselOffset = new T.Vector3();
+  const dragOffset = new T.Vector3();
+  const dragPoint = new T.Vector3();
+  const dragRotation = new T.Quaternion();
+  const floorPlane = new T.Plane();
+  const raycaster = new T.Raycaster();
+  const pointer = new T.Vector2();
+  const canvas = renderer.domElement;
+  let dragId;
   let displayWidth = 0;
   let displayHeight = 0;
 
@@ -373,11 +383,13 @@ export function createViewport(container, stage, reducedMotion) {
     if (markerVideo === video) return;
     markerVideo = video;
     if (video) {
+      vesselOffset.set(0, 0, 0);
       root.scale.setScalar(vesselScale);
       root.visible = false;
       beginPlacementScene();
       updateMarkerProjection();
     } else {
+      stopDrag();
       restoreWorkbench();
     }
   }
@@ -386,6 +398,7 @@ export function createViewport(container, stage, reducedMotion) {
     if (!markerVideo) return;
     if (!pose) {
       root.visible = false;
+      stopDrag();
       return;
     }
     updateMarkerProjection();
@@ -396,13 +409,59 @@ export function createViewport(container, stage, reducedMotion) {
     markerDown.crossVectors(markerRight, markerUp).normalize();
     markerRotation.setFromRotationMatrix(surfaceTransform.makeBasis(markerRight, markerUp, markerDown));
     if (root.visible) {
-      root.position.lerp(markerPosition, .55);
+      tableOrigin.lerp(markerPosition, .55);
       root.quaternion.slerp(markerRotation, .55);
     } else {
-      root.position.copy(markerPosition);
+      tableOrigin.copy(markerPosition);
       root.quaternion.copy(markerRotation);
       root.visible = true;
     }
+    updateVesselPosition();
+  }
+
+  function updateVesselPosition() {
+    root.position.copy(vesselOffset).applyQuaternion(root.quaternion).add(tableOrigin);
+  }
+
+  function pointOnTable(event) {
+    const rect = canvas.getBoundingClientRect();
+    pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
+    raycaster.setFromCamera(pointer, markerCamera);
+    markerUp.set(0, 1, 0).applyQuaternion(root.quaternion);
+    floorPlane.setFromNormalAndCoplanarPoint(markerUp, tableOrigin);
+    if (!raycaster.ray.intersectPlane(floorPlane, dragPoint)) return null;
+    dragRotation.copy(root.quaternion).invert();
+    return dragPoint.sub(tableOrigin).applyQuaternion(dragRotation);
+  }
+
+  function stopDrag(event) {
+    if (dragId === undefined || (event && event.pointerId !== dragId)) return;
+    const id = dragId;
+    dragId = undefined;
+    if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (!markerVideo || !root.visible || dragId !== undefined || event.button !== 0) return;
+    const point = pointOnTable(event);
+    if (!point) return;
+    current.updateWorldMatrix(true, true);
+    if (raycaster.intersectObject(current, true).length === 0) return;
+    dragOffset.copy(vesselOffset).sub(point);
+    dragId = event.pointerId;
+    canvas.setPointerCapture(dragId);
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== dragId) return;
+    const point = pointOnTable(event);
+    if (!point) return;
+    point.add(dragOffset);
+    if (point.lengthSq() > 2.25) return;
+    vesselOffset.set(point.x, 0, point.z);
+    updateVesselPosition();
+  });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    canvas.addEventListener(name, stopDrag);
   }
 
   function resize() {

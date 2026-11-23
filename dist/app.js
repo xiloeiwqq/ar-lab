@@ -48,7 +48,7 @@ let stream;
 let cameraRequest = 0;
 let cameraPending = false;
 let markerMode = false;
-let markerVisible = false;
+let markerTracking = 'waiting';
 let stopTracking;
 let resumeCameraAfterXR = false;
 let vesselRequest = 0;
@@ -217,7 +217,7 @@ function renderBench() {
     select.value = selected[index] ?? '';
     for (const option of select.options) option.disabled = Boolean(option.value) && option.value === selected[1 - index];
   });
-  for (const [id, allowed] of [['mix', complete && (!markerMode || markerVisible)], ['xr-mix', complete && xrPlaced]]) {
+  for (const [id, allowed] of [['mix', complete && (!markerMode || hasTablePose())], ['xr-mix', complete && xrPlaced]]) {
     $(id).disabled = !allowed || mixing;
     $(id).innerHTML = `${icon('flask')}${mixing ? 'Смешивание…' : result ? 'Повторить опыт' : 'Смешать реагенты'}`;
   }
@@ -229,7 +229,7 @@ function resultMarkup(item) {
   return `<h3>${item.type || item.title}</h3>${item.equation ? `<p class="equation">${item.equation}</p>` : ''}<p class="result-description">${item.description}</p>${item.source ? `<a class="result-source" href="${item.source}" target="_blank" rel="noopener noreferrer">Источник опыта</a>` : ''}`;
 }
 function mix() {
-  if (mixing || !selected.every(Boolean) || (markerMode && !markerVisible)) return;
+  if (mixing || !selected.every(Boolean) || (markerMode && !hasTablePose())) return;
   const reaction = findExperiment(selected);
   result = null;
   mixing = true;
@@ -333,9 +333,20 @@ function stageMessage(message) {
   $('stage-status').textContent = message;
   $('stage-live').textContent = message;
 }
+function hasTablePose() {
+  return markerTracking === 'code' || markerTracking === 'surface';
+}
 function sceneStatus() {
   if (feed.hidden) return '3D-сцена';
-  if (markerMode) return markerVisible ? 'Колба на QR-коде' : 'Положите QR-код на стол и наведите камеру';
+  if (markerMode) {
+    const messages = {
+      waiting: 'Положите QR-код на стол и наведите камеру',
+      code: 'Покажите камере детали стола рядом с QR-кодом',
+      surface: 'Колба закреплена · её можно перетащить',
+      lost: 'Верните в кадр участок стола',
+    };
+    return messages[markerTracking];
+  }
   return 'Камера';
 }
 async function changeVessel() {
@@ -403,7 +414,7 @@ function stopMarkerMode() {
   stopTracking = undefined;
   if (!markerMode) return;
   markerMode = false;
-  markerVisible = false;
+  markerTracking = 'waiting';
   stage.classList.remove('marker-mode');
   viewport?.setMarkerVideo(null);
   renderBench();
@@ -416,10 +427,11 @@ function activateMarkerTracking() {
     stageMessage('Не удалось запустить отслеживание QR-кода');
   };
   try {
-    stopTracking = trackTableMarker(feed, (pose) => {
+    stopTracking = trackTableMarker(feed, (pose, tracking) => {
       viewport.setMarkerPose(pose);
-      if (markerVisible === Boolean(pose)) return;
-      markerVisible = Boolean(pose);
+      const next = tracking ?? (markerTracking === 'surface' ? 'lost' : 'waiting');
+      if (markerTracking === next) return;
+      markerTracking = next;
       stageMessage(sceneStatus());
       renderBench();
     }, failed);

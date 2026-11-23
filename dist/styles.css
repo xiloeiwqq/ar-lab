@@ -67,6 +67,7 @@ h2{font-size:1.15rem;font-weight:800;letter-spacing:-.03em}
 .stage.camera-mode .stage-grid,.stage.camera-mode .stage-glow,.stage.camera-mode #stage-hint{display:none}
 .stage.camera-mode .canvas-wrap{pointer-events:none}
 .stage.camera-mode:not(.marker-mode) .canvas-wrap{visibility:hidden}
+.stage.marker-mode .canvas-wrap{pointer-events:auto}
 .canvas-wrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .canvas-wrap canvas:active{cursor:grabbing}
 .stage-status,.stage-tools,.stage-controls,.stage-empty{z-index:1}

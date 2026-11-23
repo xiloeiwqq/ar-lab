@@ -1,7 +1,7 @@
 import { estimateMarkerPose } from './marker-pose.js';
 
-const scanInterval = 85;
-const lostAfter = 350;
+const scanInterval = 65;
+const lostAfter = 425;
 const scanResolution = 540;
 
 export function trackTableMarker(video, onPose, onError) {
@@ -13,7 +13,6 @@ export function trackTableMarker(video, onPose, onError) {
   let lastVideoTime = -1;
   let lastSeen = -Infinity;
   let scanning = false;
-  let trackedId;
 
   function stop() {
     cancelAnimationFrame(frame);
@@ -22,12 +21,11 @@ export function trackTableMarker(video, onPose, onError) {
 
   worker.onmessage = ({ data }) => {
     scanning = false;
-    if (!data || (trackedId !== undefined && trackedId !== data.id)) return;
+    if (!data) return;
     const pose = estimateMarkerPose(data.location, canvas.width, canvas.height);
     if (!pose) return;
-    trackedId = data.id;
     lastSeen = performance.now();
-    onPose(pose);
+    onPose(pose, data.tracking);
   };
   worker.onerror = () => {
     stop();
