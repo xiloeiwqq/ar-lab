@@ -40,7 +40,7 @@ let result = null;
 let mixing = false;
 let mixTimer;
 let viewport;
-let xrSupport = false;
+let xrSupport = navigator.xr ? undefined : false;
 let xrPlaced = false;
 let busyAR = false;
 let stream;
@@ -63,7 +63,6 @@ const mobileControls = [
   ['mix-panel', 'mobile-bench'],
   ['stage-tools', 'mobile-scene'],
   ['stage-controls', 'mobile-scene'],
-  ['open-ar', 'mobile-scene'],
   ['catalog', 'mobile-experiments'],
   ['journal-list', 'mobile-journal'],
 ].map(([id, destination]) => {
@@ -100,7 +99,7 @@ function updateMobileActions() {
   $('mobile-camera').hidden = !inLab || !feed.hidden;
   $('mobile-camera').disabled = cameraPending;
   $('mobile-result').hidden = !inLab || !result;
-  $('open-ar').hidden = mobileLayout.matches && !feed.hidden && !xrSupport;
+  $('mobile-ar').hidden = !inLab;
 }
 
 function placeMobileControls() {
@@ -328,6 +327,10 @@ function stageMessage(message) {
   $('stage-status').textContent = message;
   $('stage-live').textContent = message;
 }
+function sceneStatus() {
+  if (feed.hidden) return '3D-сцена';
+  return xrSupport === false ? 'Камера · размещение AR недоступно' : 'Камера';
+}
 async function changeVessel() {
   const request = ++vesselRequest;
   const id = $('vessel').value;
@@ -335,7 +338,7 @@ async function changeVessel() {
   try {
     if (id !== 'simulation') stageMessage('Загрузка модели…');
     await viewport.selectVessel(id, () => request === vesselRequest);
-    if (request === vesselRequest) stageMessage(stream ? 'Наложение на камеру' : '3D-сцена');
+    if (request === vesselRequest) stageMessage(sceneStatus());
   } catch (error) {
     if (request !== vesselRequest) return;
     $('vessel').value = 'simulation';
@@ -397,7 +400,6 @@ function closeCamera() {
   feed.hidden = true;
   stage.classList.remove('camera-mode');
   $('close-camera').hidden = true;
-  viewport?.cameraMode(false);
   stageMessage('3D-сцена');
   updateMobileActions();
 }
@@ -424,8 +426,7 @@ async function showCamera() {
     feed.hidden = false;
     stage.classList.add('camera-mode');
     $('close-camera').hidden = false;
-    viewport?.cameraMode(true);
-    stageMessage('Наложение на камеру');
+    stageMessage(sceneStatus());
     if (document.activeElement === $('mobile-camera')) mobileToggle.focus({ preventScroll: true });
     if (!mobileLayout.matches) stage.scrollIntoView({ block: 'nearest' });
   } catch (error) {
@@ -452,11 +453,19 @@ function setXRMenu(open) {
   $('xr-toggle').lastElementChild.textContent = open ? 'Закрыть' : 'Меню';
 }
 $('xr-toggle').addEventListener('click', () => setXRMenu($('xr-actions').hidden));
+$('xr-place').addEventListener('click', () => viewport?.requestPlacement());
+$('xr-move').addEventListener('click', () => viewport?.moveVessel());
 function onXRState(state) {
   xrPlaced = state === 'placed';
-  $('xr-instruction').textContent = xrPlaced
-    ? 'Выберите реагенты и запустите опыт.'
-    : 'Наведите камеру на поверхность и коснитесь экрана.';
+  const instructions = {
+    scanning: 'Наведите камеру на стол и медленно подвигайте телефоном.',
+    ready: 'Поверхность найдена. Поставьте колбу в зелёное кольцо.',
+    placed: 'Колба на поверхности. Выберите реагенты и запустите опыт.',
+  };
+  $('xr-instruction').textContent = instructions[state] ?? '';
+  $('xr-place').hidden = state !== 'ready';
+  $('xr-move').hidden = !xrPlaced;
+  if (state === 'scanning') setXRMenu(false);
   if (state === 'ended') {
     overlay.hidden = true;
     setXRMenu(false);
@@ -468,13 +477,13 @@ function onXRState(state) {
   }
   renderBench();
 }
-$('open-ar').addEventListener('click', async () => {
-  if (busyAR || cameraPending || !viewport) return;
+async function openAR() {
+  if (busyAR || !overlay.hidden || !viewport) return;
   if (mobileLayout.matches) setMobileMenu(false, true);
   busyAR = true;
   try {
-    if (xrSupport) {
-      const restoreCamera = Boolean(stream);
+    if (xrSupport !== false) {
+      const restoreCamera = Boolean(stream) || cameraPending;
       if (restoreCamera) closeCamera();
       overlay.hidden = false;
       onXRState('scanning');
@@ -483,21 +492,23 @@ $('open-ar').addEventListener('click', async () => {
         resumeCameraAfterXR = restoreCamera && !overlay.hidden;
       } catch (error) {
         onXRState('ended');
+        if (restoreCamera || (!mobileLayout.matches && error.name === 'NotSupportedError')) await showCamera();
         if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-          if (restoreCamera) await showCamera();
           stageMessage('Запуск AR не разрешён');
+        } else {
+          stageMessage('Размещение в AR недоступно');
         }
-        else await showCamera();
       }
-    } else if (stream) {
-      if (!mobileLayout.matches) stage.scrollIntoView({ block: 'nearest' });
     } else {
-      await showCamera();
+      if (!mobileLayout.matches && !stream) await showCamera();
+      if (stream || mobileLayout.matches) stageMessage('Размещение в AR недоступно в этом браузере');
     }
   } finally {
     busyAR = false;
   }
-});
+}
+$('open-ar').addEventListener('click', openAR);
+$('mobile-ar').addEventListener('click', openAR);
 $('xr-close').addEventListener('click', () => viewport?.endXR());
 overlay.addEventListener('beforexrselect', (event) => {
   if (event.target.closest('button, select, .xr-bottom')) event.preventDefault();
@@ -510,11 +521,11 @@ try {
   const { createViewport } = await import('./viewport.js');
   viewport = createViewport($('canvas-wrap'), stage, reducedMotion);
   viewport.setMixture(selected);
-  viewport.cameraMode(!feed.hidden);
+  for (const id of ['open-ar', 'mobile-ar']) $(id).disabled = false;
   if ($('vessel').value !== 'simulation') void changeVessel();
   navigator.xr?.isSessionSupported('immersive-ar').then((supported) => {
     xrSupport = supported;
-    updateMobileActions();
+    if (!feed.hidden) stageMessage(sceneStatus());
   }).catch(() => {});
 } catch (error) {
   console.error(error);

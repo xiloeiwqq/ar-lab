@@ -30,7 +30,7 @@
           <h1 id="lab-title">Виртуальная <span class="accent">лаборатория</span></h1>
           <p>Смешивайте вещества и наблюдайте, как протекают химические реакции.</p>
         </div>
-        <button class="button ar-button" id="open-ar" type="button"><span data-icon="scan"></span>Открыть в AR</button>
+        <button class="button ar-button" id="open-ar" type="button" disabled><span data-icon="scan"></span>Поставить колбу</button>
       </div>
       <div class="workspace">
         <aside class="panel reagents" id="reagent-panel" aria-labelledby="reagents-title">
@@ -99,13 +99,14 @@
       <div class="mobile-bar">
         <button type="button" class="button secondary" id="mobile-camera"><span data-icon="camera"></span><span>Камера</span></button>
         <button type="button" class="button secondary" id="mobile-result" aria-controls="mobile-bench" hidden><span data-icon="observation"></span>Результат</button>
+        <button type="button" class="button secondary" id="mobile-ar" disabled><span data-icon="scan"></span>Поставить колбу</button>
         <button type="button" class="button primary" id="mobile-toggle" aria-controls="mobile-menu" aria-expanded="false"><span data-icon="menu"></span><span>Меню</span></button>
       </div>
     </div>
   </div>
   <dialog id="help">
     <div class="dialog-heading"><h2>Как пользоваться</h2><form method="dialog"><button class="icon-button" aria-label="Закрыть"><span data-icon="close"></span></button></form></div>
-    <ol><li>Выберите два реагента или откройте готовый опыт.</li><li>Нажмите «Смешать реагенты» и наблюдайте, что происходит в колбе.</li><li>Для размещения колбы на поверхности откройте AR на устройстве с поддержкой WebXR. В других браузерах можно включить наложение на камеру.</li></ol>
+    <ol><li>Выберите два реагента или откройте готовый опыт.</li><li>Нажмите «Смешать реагенты» и наблюдайте, что происходит в колбе.</li><li>Нажмите «Поставить колбу» и наведите камеру на стол. Когда появится зелёное кольцо, коснитесь экрана или нажмите «Поставить сюда». Для этого нужен браузер с поддержкой WebXR.</li></ol>
     <p class="muted">Симуляция показывает типичные признаки реакций. Она не рассчитывает концентрации, выход продуктов или скорость реакции. Оттенки реагентов в списке служат для навигации.</p>
     <h3>Источники</h3>
     <ul id="sources"></ul>
@@ -113,11 +114,13 @@
   <div class="xr-overlay" id="xr-overlay" hidden>
     <div class="xr-top"><strong><span data-icon="scan"></span> ХимЛаб AR</strong><button class="icon-button" type="button" id="xr-close" aria-label="Выйти из AR"><span data-icon="close"></span></button></div>
     <div class="xr-bottom">
-      <p id="xr-instruction" role="status">Наведите камеру на поверхность и коснитесь экрана.</p>
+      <p id="xr-instruction" role="status">Наведите камеру на стол и медленно подвигайте телефоном.</p>
+      <button class="button primary" type="button" id="xr-place" hidden>Поставить сюда</button>
       <div id="xr-actions" class="xr-actions">
         <div id="xr-slots" class="xr-slots"></div>
         <p id="xr-result" aria-live="polite"></p>
         <button class="button primary" type="button" id="xr-mix" disabled><span data-icon="flask"></span>Смешать реагенты</button>
+        <button class="button secondary" type="button" id="xr-move" hidden><span data-icon="focus"></span>Переставить колбу</button>
       </div>
       <button class="button primary" type="button" id="xr-toggle" aria-controls="xr-actions" aria-expanded="false"><span data-icon="menu"></span><span>Меню</span></button>
     </div>

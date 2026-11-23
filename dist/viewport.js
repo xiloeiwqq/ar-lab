@@ -16,6 +16,8 @@ const fills = {
 const clearLiquid = '#929ad8';
 const purpleLiquid = '#9e69e2';
 const neutral = new T.Color(clearLiquid);
+const vesselScale = .087;
+const minSurfaceNormalY = Math.cos(T.MathUtils.degToRad(15));
 
 function lathe(profile, segments = 96) {
   return new T.LatheGeometry(profile.map(([r, y]) => new T.Vector2(r, y)), segments);
@@ -174,7 +176,27 @@ export function createViewport(container, stage, reducedMotion) {
 
   const root = new T.Group();
   const base = podium();
-  root.add(base);
+  const vessel = new T.Group();
+  const contactShadow = new T.Mesh(new T.PlaneGeometry(3, 3), new T.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      varying vec2 shadowUv;
+      void main() {
+        shadowUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec2 shadowUv;
+      void main() {
+        float fade = 1.0 - smoothstep(.12, .5, length(shadowUv - .5));
+        gl_FragColor = vec4(0.0, 0.0, 0.0, fade * .42);
+      }`,
+  }));
+  contactShadow.rotation.x = -Math.PI / 2;
+  contactShadow.position.y = .005;
+  contactShadow.visible = false;
+  root.add(base, vessel, contactShadow);
   scene.add(root);
   const glass = glassMaterial();
   const simple = new T.Group();
@@ -196,12 +218,14 @@ export function createViewport(container, stage, reducedMotion) {
   };
   const cached = new Map([['simulation', simple]]);
   let current = simple;
+  const modelBounds = new T.Box3();
+  let contactHeight = modelBounds.setFromObject(current, true).min.y;
   let currentFill = liquidModel(fills.simulation);
   let sourceTint = neutral;
   let mixture = [];
   let animationStart = null;
   let reaction;
-  root.add(current, currentFill.group);
+  vessel.add(current, currentFill.group);
 
   const bubbleGeometry = new T.SphereGeometry(1, 10, 8);
   const bubbleMaterial = new T.MeshBasicMaterial({
@@ -211,7 +235,7 @@ export function createViewport(container, stage, reducedMotion) {
     const mesh = new T.Mesh(bubbleGeometry, bubbleMaterial);
     mesh.renderOrder = 6;
     mesh.visible = false;
-    root.add(mesh);
+    vessel.add(mesh);
     return {
       mesh, angle: index * 2.39996, distance: .15 + ((index * 29) % 61) / 100,
       delay: ((index * 47) % 100) / 100, speed: .55 + ((index * 13) % 45) / 100,
@@ -223,7 +247,7 @@ export function createViewport(container, stage, reducedMotion) {
     const mesh = new T.Mesh(bubbleGeometry, grainMaterial);
     mesh.scale.setScalar(.012 + (i % 5) * .002);
     mesh.visible = false;
-    root.add(mesh);
+    vessel.add(mesh);
     return mesh;
   });
   const pour = new T.Mesh(new T.CylinderGeometry(.018, .027, 1.77, 12),
@@ -231,7 +255,7 @@ export function createViewport(container, stage, reducedMotion) {
   pour.position.set(.015, 1.75, 0);
   pour.renderOrder = 5;
   pour.visible = false;
-  root.add(pour);
+  vessel.add(pour);
 
   function setColor(color) {
     for (const part of [currentFill.body, currentFill.surface]) {
@@ -277,15 +301,17 @@ export function createViewport(container, stage, reducedMotion) {
       cached.set(id, model);
     }
     if (!stillCurrent() || model === current) return;
-    root.remove(current, currentFill.group);
+    vessel.remove(current, currentFill.group);
     currentFill.group.traverse((node) => {
       if (!node.isMesh) return;
       node.geometry.dispose();
       node.material.dispose();
     });
     current = model;
+    contactHeight = modelBounds.setFromObject(current, true).min.y;
+    if (session) vessel.position.y = -contactHeight;
     currentFill = liquidModel(fills[id]);
-    root.add(current, currentFill.group);
+    vessel.add(current, currentFill.group);
     setColor(sourceTint);
   }
 
@@ -333,13 +359,11 @@ export function createViewport(container, stage, reducedMotion) {
   let session;
   let hits;
   let placed = false;
+  let placeRequested = false;
+  let placement = 0;
+  let anchor;
   let onState;
-  let cameraEnabled = false;
-
-  function setCameraMode(enabled) {
-    cameraEnabled = enabled;
-    base.visible = !enabled && !session;
-  }
+  const surfaceTransform = new T.Matrix4();
 
   function resize() {
     const { width, height } = container.getBoundingClientRect();
@@ -354,18 +378,55 @@ export function createViewport(container, stage, reducedMotion) {
   new ResizeObserver(resize).observe(container);
   resize();
 
+  function clearPlacement() {
+    placement++;
+    anchor?.delete();
+    anchor = null;
+    placeRequested = false;
+    placed = false;
+    reticle.visible = false;
+    root.visible = false;
+  }
+
+  function requestPlacement() {
+    if (session && !placed && reticle.visible) placeRequested = true;
+  }
+
+  function moveVessel() {
+    if (!session || !placed) return;
+    clearPlacement();
+    onState('scanning');
+  }
+
+  function applySurfacePose(matrix) {
+    surfaceTransform.fromArray(matrix).decompose(root.position, root.quaternion, root.scale);
+    root.scale.setScalar(vesselScale);
+  }
+
+  async function attachAnchor(hit, active, revision) {
+    try {
+      const trackedAnchor = await hit.createAnchor();
+      if (session === active && placement === revision) anchor = trackedAnchor;
+      else trackedAnchor.delete();
+    } catch {
+      // Keep the placement pose in the session's local reference space.
+    }
+  }
+
   function finishXR(ended) {
     if (session !== ended) return;
     hits?.cancel();
     hits = null;
     session = null;
-    reticle.visible = false;
+    clearPlacement();
     root.position.set(0, 0, 0);
     root.quaternion.identity();
     root.scale.setScalar(1);
     root.visible = true;
+    vessel.position.y = 0;
+    contactShadow.visible = false;
     orbit.enabled = true;
-    base.visible = !cameraEnabled;
+    base.visible = true;
     onState?.('ended');
     requestAnimationFrame(resize);
   }
@@ -373,28 +434,24 @@ export function createViewport(container, stage, reducedMotion) {
   async function startXR(overlay, onChange) {
     const active = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['local', 'hit-test', 'dom-overlay'],
+      optionalFeatures: ['anchors'],
       domOverlay: { root: overlay },
     });
     session = active;
     onState = onChange;
-    placed = false;
-    root.visible = false;
+    clearPlacement();
+    vessel.position.y = -contactHeight;
+    contactShadow.visible = true;
     base.visible = false;
     orbit.enabled = false;
     active.addEventListener('end', () => finishXR(active), { once: true });
-    active.addEventListener('select', () => {
-      if (!reticle.visible || placed || session !== active) return;
-      target.matrix.decompose(root.position, root.quaternion, root.scale);
-      root.scale.setScalar(.087);
-      root.visible = true;
-      placed = true;
-      reticle.visible = false;
-      onState('placed');
-    });
+    active.addEventListener('select', requestPlacement);
     try {
       await renderer.xr.setSession(active);
       const viewer = await active.requestReferenceSpace('viewer');
-      hits = await active.requestHitTestSource({ space: viewer });
+      const source = await active.requestHitTestSource({ space: viewer });
+      if (session === active) hits = source;
+      else source.cancel();
     } catch (error) {
       if (session === active) await active.end().catch(() => {});
       finishXR(active);
@@ -402,17 +459,44 @@ export function createViewport(container, stage, reducedMotion) {
     }
   }
 
-  renderer.setAnimationLoop((_, frame) => {
-    if (frame && hits && !placed) {
-      const hit = frame.getHitTestResults(hits)[0];
-      const space = renderer.xr.getReferenceSpace();
-      const pose = space && hit?.getPose(space);
-      reticle.visible = Boolean(pose);
-      if (pose) {
-        target.matrix.fromArray(pose.transform.matrix);
-        target.matrixWorldNeedsUpdate = true;
-      }
+  function updatePlacement(frame, space) {
+    if (placed) {
+      if (!anchor) return;
+      const pose = frame.getPose(anchor.anchorSpace, space);
+      root.visible = Boolean(pose);
+      if (pose) applySurfacePose(pose.transform.matrix);
+      return;
     }
+    const placeNow = placeRequested;
+    placeRequested = false;
+    for (const hit of frame.getHitTestResults(hits)) {
+      const matrix = hit.getPose(space)?.transform.matrix;
+      // The hit-test pose's local Y axis is the normal to the surface.
+      if (!matrix || matrix[5] < minSurfaceNormalY) continue;
+      target.matrix.fromArray(matrix);
+      target.matrixWorldNeedsUpdate = true;
+      if (placeNow) {
+        applySurfacePose(matrix);
+        root.visible = true;
+        placed = true;
+        reticle.visible = false;
+        if (hit.createAnchor) void attachAnchor(hit, session, ++placement);
+        onState('placed');
+      } else if (!reticle.visible) {
+        reticle.visible = true;
+        onState('ready');
+      }
+      return;
+    }
+    if (reticle.visible) {
+      reticle.visible = false;
+      onState('scanning');
+    }
+  }
+
+  renderer.setAnimationLoop((_, frame) => {
+    const space = frame && renderer.xr.getReferenceSpace();
+    if (space && hits) updatePlacement(frame, space);
     if (!frame) {
       if (stage.closest('[hidden]')) return;
       orbit.update();
@@ -421,7 +505,7 @@ export function createViewport(container, stage, reducedMotion) {
     renderer.render(scene, camera);
   });
 
-  return { resetView, setMixture, startReaction, selectVessel, startXR, endXR: () => session?.end(), cameraMode: setCameraMode };
+  return { resetView, setMixture, startReaction, selectVessel, startXR, endXR: () => session?.end(), requestPlacement, moveVessel };
 }
 
 
