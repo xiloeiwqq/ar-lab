@@ -3,9 +3,11 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { assets, fills, primaryProfile, vesselScale } from './vessels.js';
 import { markerFocalLength } from './marker-pose.js';
-import { reactionSeconds } from './chemistry.js';
+import { reactionSeconds, reagents } from './chemistry.js';
 const clearLiquid = '#929ad8';
-const purpleLiquid = '#9e69e2';
+const sedimentColor = '#f3eafa';
+const sedimentGlow = '#ddd3f3';
+const grainColor = '#fff7ff';
 const neutral = new T.Color(clearLiquid);
 const minSurfaceNormalY = Math.cos(T.MathUtils.degToRad(15));
 
@@ -69,7 +71,7 @@ function liquidModel(spec) {
   meniscus.position.y = spec.top;
   meniscus.renderOrder = 2;
   const sediment = new T.Mesh(new T.CylinderGeometry(spec.sedimentRadius ?? spec.radius, spec.sedimentRadius ?? spec.radius, .045, 52),
-    new T.MeshStandardMaterial({ color: '#f3eafa', emissive: '#ddd3f3', emissiveIntensity: .3, roughness: .9 }));
+    new T.MeshStandardMaterial({ color: sedimentColor, emissive: sedimentGlow, emissiveIntensity: .3, roughness: .9 }));
   sediment.position.y = spec.base + .045;
   sediment.visible = false;
   sediment.renderOrder = 1;
@@ -232,7 +234,7 @@ export function createViewport(container, stage, reducedMotion) {
       size: .024 + ((index * 7) % 13) / 250,
     };
   });
-  const grainMaterial = new T.MeshStandardMaterial({ color: '#fff7ff', roughness: .85 });
+  const grainMaterial = new T.MeshStandardMaterial({ color: grainColor, roughness: .85 });
   const grains = Array.from({ length: 31 }, (_, i) => {
     const mesh = new T.Mesh(bubbleGeometry, grainMaterial);
     mesh.scale.setScalar(.016 + (i % 5) * .006);
@@ -264,8 +266,9 @@ export function createViewport(container, stage, reducedMotion) {
     return mesh;
   });
   const chalkGeometry = new T.DodecahedronGeometry(1);
+  const chalkMaterial = grainMaterial.clone();
   const chalkPieces = Array.from({ length: 6 }, (_, i) => {
-    const mesh = new T.Mesh(chalkGeometry, grainMaterial);
+    const mesh = new T.Mesh(chalkGeometry, chalkMaterial);
     mesh.rotation.set(i * .8, i * 1.2, i * .4);
     mesh.renderOrder = 3;
     vessel.add(mesh);
@@ -282,7 +285,8 @@ export function createViewport(container, stage, reducedMotion) {
     mixture = [...ids];
     reaction = undefined;
     animationStart = null;
-    sourceTint = mixture.includes('indicator') ? new T.Color(purpleLiquid) : neutral;
+    const liquidColor = mixture.map((id) => reagents[id]?.liquidColor).find(Boolean);
+    sourceTint = liquidColor ? new T.Color(liquidColor) : neutral;
     setColor(sourceTint);
     currentFill.sediment.visible = false;
     for (const { mesh } of bubbles) mesh.visible = false;
@@ -292,6 +296,9 @@ export function createViewport(container, stage, reducedMotion) {
   }
   function startReaction(item) {
     reaction = item;
+    grainMaterial.color.set(item?.precipitateColor ?? grainColor);
+    cloudy.set('#e0ddf0');
+    if (item?.precipitateColor) cloudy.lerp(grainMaterial.color, .55);
     animationStart = item ? performance.now() : null;
   }
 
@@ -379,6 +386,10 @@ export function createViewport(container, stage, reducedMotion) {
     setColor(tint.copy(sourceTint).lerp(targetTint, blended).lerp(cloudy, clouds * .6));
     const bed = still ? 1 : smoothstep(elapsed, 4.2, 13.2);
     sediment.visible = settles && bed > .01;
+    if (sediment.visible) {
+      sediment.material.color.set(reaction.precipitateColor ?? sedimentColor);
+      sediment.material.emissive.set(reaction.precipitateColor ?? sedimentGlow);
+    }
     sediment.scale.set(.75 + .25 * bed, bed, .75 + .25 * bed);
     for (const [i, mesh] of grains.entries()) {
       const arrival = 9.4 + (i % 7) * .55;
@@ -443,7 +454,6 @@ export function createViewport(container, stage, reducedMotion) {
   const markerPosition = new T.Vector3();
   const markerRotation = new T.Quaternion();
   const tableRotation = new T.Quaternion();
-  const vesselHeading = new T.Quaternion();
   const surfaceRotation = new T.Quaternion();
   const markerRight = new T.Vector3();
   const markerUp = new T.Vector3();
@@ -476,7 +486,6 @@ export function createViewport(container, stage, reducedMotion) {
     markerVideo = video;
     if (video) {
       vesselOffset.set(0, 0, 0);
-      vesselHeading.identity();
       root.scale.setScalar(vesselScale);
       root.visible = false;
       beginPlacementScene();
@@ -507,10 +516,11 @@ export function createViewport(container, stage, reducedMotion) {
     } else {
       tableOrigin.copy(markerPosition);
       tableRotation.copy(markerRotation);
+      root.quaternion.copy(tableRotation);
       root.visible = true;
     }
-    // The plane updates throughout a drag, but the flask keeps the same orientation.
-    if (dragId === undefined) root.quaternion.copy(tableRotation).multiply(vesselHeading);
+    // Dragging translates the flask. Only camera tracking updates its orientation.
+    if (dragId === undefined) root.quaternion.slerp(tableRotation, .3);
     updateVesselPosition();
   }
 
@@ -532,7 +542,6 @@ export function createViewport(container, stage, reducedMotion) {
   function stopDrag(event) {
     if (dragId === undefined || (event && event.pointerId !== dragId)) return;
     const id = dragId;
-    vesselHeading.copy(tableRotation).invert().multiply(root.quaternion);
     dragId = undefined;
     if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   }
