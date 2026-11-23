@@ -106,6 +106,8 @@ function updateMobileActions() {
   $('mobile-ar').hidden = !inLab || markerMode;
   $('open-ar').hidden = markerMode;
   $('reset-view').hidden = markerMode;
+  $('replace-marker').hidden = !markerMode;
+  $('tracking-recovery').hidden = !markerMode || markerTracking !== 'lost';
 }
 
 function placeMobileControls() {
@@ -346,7 +348,7 @@ function sceneStatus() {
       waiting: 'Положите QR-код на стол и наведите камеру',
       code: 'Покажите камере детали стола рядом с QR-кодом',
       surface: 'Колба закреплена · её можно перетащить',
-      lost: 'Верните в кадр участок стола',
+      lost: 'Привязка потеряна. Верните в кадр тот же участок стола.',
     };
     return messages[markerTracking];
   }
@@ -426,13 +428,13 @@ function stopMarkerMode() {
 function activateMarkerTracking() {
   if (!markerMode || feed.hidden || stopTracking) return;
   const failed = () => {
-    stopMarkerMode();
-    stageMessage('Не удалось запустить отслеживание QR-кода');
+    openWorkbench();
+    stageMessage('Отслеживание недоступно. Открыта 3D-сцена.');
   };
   try {
     stopTracking = trackTableMarker(feed, (pose, tracking) => {
       viewport.setMarkerPose(pose);
-      const next = tracking ?? (markerTracking === 'surface' ? 'lost' : 'waiting');
+      const next = tracking ?? (markerTracking === 'waiting' ? 'waiting' : 'lost');
       if (markerTracking === next) return;
       markerTracking = next;
       stageMessage(sceneStatus());
@@ -453,6 +455,24 @@ async function startMarkerAR() {
   if (feed.hidden) await showCamera();
   else activateMarkerTracking();
 }
+
+function replaceMarker() {
+  if (!markerMode || feed.hidden) return;
+  if (mobileLayout.matches) setMobileMenu(false, true);
+  stopMarkerMode();
+  void startMarkerAR();
+}
+
+function openWorkbench() {
+  closeCamera();
+  viewport?.resetView();
+  if (mobileLayout.matches) setMobileMenu(false, true);
+}
+
+for (const button of document.querySelectorAll('[data-replace-marker]')) {
+  button.addEventListener('click', replaceMarker);
+}
+$('recover-workbench').addEventListener('click', openWorkbench);
 
 function closeCamera() {
   cameraRequest++;
@@ -485,6 +505,13 @@ async function showCamera() {
       return;
     }
     stream = camera;
+    for (const track of camera.getVideoTracks()) {
+      track.addEventListener('ended', () => {
+        if (stream !== camera) return;
+        openWorkbench();
+        stageMessage('Камера отключилась. Открыта 3D-сцена.');
+      }, { once: true });
+    }
     feed.srcObject = stream;
     await feed.play();
     if (stream !== camera) return;
@@ -527,10 +554,11 @@ function onXRState(state) {
     scanning: 'Наведите камеру на стол и медленно подвигайте телефоном.',
     ready: 'Поверхность найдена. Поставьте колбу в зелёное кольцо.',
     placed: 'Колба на поверхности. Выберите реагенты и запустите опыт.',
+    lost: 'Привязка потеряна. Верните стол в кадр или выберите в меню «Переставить колбу».',
   };
   $('xr-instruction').textContent = instructions[state] ?? '';
   $('xr-place').hidden = state !== 'ready';
-  $('xr-move').hidden = !xrPlaced;
+  $('xr-move').hidden = !xrPlaced && state !== 'lost';
   if (state === 'scanning') setXRMenu(false);
   if (state === 'ended') {
     overlay.hidden = true;

@@ -10,6 +10,7 @@ const sedimentGlow = '#ddd3f3';
 const grainColor = '#fff7ff';
 const neutral = new T.Color(clearLiquid);
 const minSurfaceNormalY = Math.cos(T.MathUtils.degToRad(15));
+const anchorGraceMs = 900;
 
 function lathe(profile, segments = 96) {
   return new T.LatheGeometry(profile.map(([r, y]) => new T.Vector2(r, y)), segments);
@@ -358,11 +359,12 @@ export function createViewport(container, stage, reducedMotion) {
   }
 
   function drawBubbles(elapsed, spec, still) {
+    const hasGas = Boolean(reaction.gas);
     for (const { mesh, angle, distance, delay, cycle, size } of bubbles) {
       const age = elapsed - delay;
       const phase = still ? delay / 3.5 : (age % cycle) / cycle;
       const strength = still ? 1 : smoothstep(elapsed, .25, 2.5) * (1 - smoothstep(elapsed, 9.5, reactionSeconds));
-      mesh.visible = reaction.gas && (still || (age >= 0 && strength > .01 && phase < .96));
+      mesh.visible = hasGas && (still || (age >= 0 && strength > .01 && phase < .96));
       if (!mesh.visible) continue;
       const swell = smoothstep(phase, 0, .25) * (1 - smoothstep(phase, .80, .97));
       const radius = distance * spec.radius * (.42 + phase * .54);
@@ -375,7 +377,7 @@ export function createViewport(container, stage, reducedMotion) {
 
   function drawReaction(elapsed, still) {
     const { spec, sediment } = currentFill;
-    const settles = reaction.precipitate || reaction.settles;
+    const settles = Boolean(reaction.precipitate || reaction.settles);
     const pourAmount = smoothstep(elapsed, 0, .35) * (1 - smoothstep(elapsed, 1.05, 1.8));
     pour.visible = !still && pourAmount > .01;
     pour.scale.set(1.4, pourAmount, 1.4);
@@ -449,6 +451,7 @@ export function createViewport(container, stage, reducedMotion) {
   let placeRequested = false;
   let placement = 0;
   let anchor;
+  let lastAnchorSeen;
   let onState;
   const surfaceTransform = new T.Matrix4();
   const markerPosition = new T.Vector3();
@@ -683,8 +686,16 @@ export function createViewport(container, stage, reducedMotion) {
     if (placed) {
       if (!anchor) return;
       const pose = frame.getPose(anchor.anchorSpace, space);
-      root.visible = Boolean(pose);
-      if (pose) applySurfacePose(pose.transform.matrix);
+      if (pose) {
+        const recovered = !root.visible;
+        lastAnchorSeen = performance.now();
+        root.visible = true;
+        applySurfacePose(pose.transform.matrix);
+        if (recovered) onState('placed');
+      } else if (root.visible && performance.now() - lastAnchorSeen > anchorGraceMs) {
+        root.visible = false;
+        onState('lost');
+      }
       return;
     }
     const placeNow = placeRequested;
@@ -699,6 +710,7 @@ export function createViewport(container, stage, reducedMotion) {
         applySurfacePose(matrix);
         root.visible = true;
         placed = true;
+        lastAnchorSeen = performance.now();
         reticle.visible = false;
         if (hit.createAnchor) void attachAnchor(hit, session, ++placement);
         onState('placed');

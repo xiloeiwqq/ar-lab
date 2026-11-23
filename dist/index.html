@@ -43,7 +43,13 @@
           <div class="stage-grid" aria-hidden="true"></div>
           <div class="stage-glow" aria-hidden="true"></div>
           <div class="canvas-wrap" id="canvas-wrap"></div>
-          <div class="stage-status"><span class="status-dot"></span><span id="stage-status">3D-сцена</span></div>
+          <div class="stage-notice">
+            <div class="stage-status"><span class="status-dot"></span><span id="stage-status">3D-сцена</span></div>
+            <div class="tracking-recovery" id="tracking-recovery" aria-label="Восстановление колбы" role="group" hidden>
+              <button type="button" class="button primary" data-replace-marker>Поставить заново</button>
+              <button type="button" class="button secondary" id="recover-workbench">Открыть 3D</button>
+            </div>
+          </div>
           <div class="stage-tools" id="stage-tools">
             <button type="button" class="icon-button" id="reset-view" title="Вернуть исходный ракурс" aria-label="Вернуть исходный ракурс"><span data-icon="focus"></span></button>
             <button type="button" class="icon-button" id="fullscreen" title="Развернуть сцену" aria-label="Развернуть сцену"><span data-icon="expand"></span></button>
@@ -52,6 +58,7 @@
           <div class="stage-controls" id="stage-controls">
             <label class="model-picker"><span data-icon="flask"></span><select id="vessel" aria-label="Выбрать колбу"><option value="simulation">Колба Эрленмейера</option><option value="erlenmeyer">Эрленмейер · CC0</option><option value="round">Круглодонная · CC0</option></select><span data-icon="chevron"></span></label>
             <span class="stage-hint" id="stage-hint"><span data-icon="rotate"></span>Потяните, чтобы повернуть</span>
+            <button type="button" class="button small" id="replace-marker" data-replace-marker hidden>Поставить заново</button>
             <button type="button" class="button small" id="close-camera" hidden>Закрыть камеру</button>
           </div>
           <div class="sr-only" id="stage-live" aria-live="polite"></div>
@@ -108,7 +115,7 @@
   </div>
   <dialog id="help">
     <div class="dialog-heading"><h2>Как пользоваться</h2><form method="dialog"><button class="icon-button" aria-label="Закрыть"><span data-icon="close"></span></button></form></div>
-    <ol><li>Нажмите «Поставить колбу». Если сайт просит QR-код, положите на стол код, по которому открыли сайт, или <a href="assets/table-marker.png" download>скачайте код для стола</a>. В кадре должны быть видны детали поверхности рядом с кодом.</li><li>Когда появится сообщение «Колба закреплена», код можно убрать. Чтобы передвинуть колбу, перетащите её пальцем по столу.</li><li>Откройте меню, выберите два реагента или готовый опыт и нажмите «Смешать реагенты». В режиме с зелёным кольцом сначала нажмите «Поставить сюда».</li></ol>
+    <ol><li>Нажмите «Поставить колбу». Если сайт просит QR-код, положите на стол код, по которому открыли сайт, или <a href="assets/table-marker.png" download>скачайте код для стола</a>. В кадре должны быть видны детали поверхности рядом с кодом.</li><li>Когда появится сообщение «Колба закреплена», код можно убрать. Чтобы передвинуть колбу, перетащите её пальцем по столу. Если привязка потерялась, верните в кадр тот же участок стола или нажмите «Поставить заново».</li><li>Откройте меню, выберите два реагента или готовый опыт и нажмите «Смешать реагенты». В режиме с зелёным кольцом сначала нажмите «Поставить сюда».</li></ol>
     <p class="muted">Симуляция показывает типичные признаки реакций. Она не рассчитывает концентрации, выход продуктов или скорость реакции. Оттенки реагентов в списке служат для навигации.</p>
     <h3>Источники</h3>
     <ul id="sources"></ul>

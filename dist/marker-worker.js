@@ -11,12 +11,16 @@ const homography = new cv.motion_model.homography2d();
 const ransac = new cv.ransac_params_t(4, 2.5, .45, .99);
 const transform = new cv.matrix_t(3, 3, cv.F32C1_t);
 const inliers = new cv.matrix_t(maxPoints, 1, cv.U8C1_t);
+const keyframeInterval = 18;
+const keyframes = [];
 let previous;
 let current;
 let corners;
 let points = [];
 let markerId;
 let seedIn = 0;
+let saveIn = keyframeInterval;
+let failedFrames = 0;
 
 function createPyramid(width, height) {
   const pyramid = new cv.pyramid_t(3);
@@ -30,6 +34,9 @@ function resetImages(width, height) {
   corners = undefined;
   points = [];
   seedIn = 0;
+  saveIn = keyframeInterval;
+  failedFrames = 0;
+  keyframes.length = 0;
 }
 
 function bounds(points) {
@@ -88,29 +95,60 @@ function seedSurface(image, quad, retained = []) {
   return selected;
 }
 
-function fitSurface() {
-  const count = points.length;
-  const start = Float32Array.from(points.flatMap(({ x, y }) => [x, y]));
+function patchCorrelation(fromImage, toImage, start, end) {
+  const { cols: width, rows: height } = fromImage;
+  const x = Math.round(start.x), y = Math.round(start.y);
+  const u = Math.round(end.x), v = Math.round(end.y);
+  const radius = 4;
+  if (Math.min(x, y, u, v) < radius || Math.max(x, u) >= width - radius || Math.max(y, v) >= height - radius) return 0;
+  let a = 0, b = 0, aa = 0, bb = 0, ab = 0;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const p = fromImage.data[(y + dy) * width + x + dx];
+      const q = toImage.data[(v + dy) * width + u + dx];
+      a += p;
+      b += q;
+      aa += p * p;
+      bb += q * q;
+      ab += p * q;
+    }
+  }
+  // Correlation rejects a different patch even if its average brightness is similar.
+  const size = (2 * radius + 1) ** 2;
+  const contrast = Math.sqrt((aa - a * a / size) * (bb - b * b / size));
+  return contrast > 0 ? (ab - a * b / size) / contrast : 0;
+}
+
+function fitSurface(reference, referencePoints, recovering = false) {
+  const count = referencePoints.length;
+  const start = Float32Array.from(referencePoints.flatMap(({ x, y }) => [x, y]));
   const end = new Float32Array(start.length);
   const back = new Float32Array(start.length);
   const found = new Uint8Array(count);
   const returned = new Uint8Array(count);
-  cv.optical_flow_lk.track(previous, current, start, end, count, 17, 25, found);
-  cv.optical_flow_lk.track(current, previous, end, back, count, 17, 25, returned);
+  const windowSize = recovering ? 23 : 17;
+  cv.optical_flow_lk.track(reference, current, start, end, count, windowSize, 25, found);
+  cv.optical_flow_lk.track(current, reference, end, back, count, windowSize, 25, returned);
   const from = [];
   const to = [];
+  const similarities = [];
   for (let i = 0; i < count; i++) {
     const ix = i * 2;
     if (!found[i] || !returned[i] || Math.hypot(start[ix] - back[ix], start[ix + 1] - back[ix + 1]) > 1.6) continue;
-    from.push(points[i]);
-    to.push({ x: end[ix], y: end[ix + 1] });
+    const point = { x: end[ix], y: end[ix + 1] };
+    const similarity = recovering ? patchCorrelation(reference.data[0], current.data[0], referencePoints[i], point) : 1;
+    if (similarity < .78) continue;
+    from.push(referencePoints[i]);
+    to.push(point);
+    similarities.push(similarity);
   }
   if (!hasCoverage(from) || !cv.motion_estimator.ransac(ransac, homography, from, to, from.length, transform, inliers, 90)) return null;
   const reliableFrom = from.filter((_, i) => inliers.data[i]);
   const reliableTo = to.filter((_, i) => inliers.data[i]);
+  const quality = similarities.reduce((sum, similarity, i) => sum + (inliers.data[i] ? similarity : 0), 0);
   if (reliableTo.length < to.length * .65 || !hasCoverage(reliableTo)) return null;
   if (!homography.run(reliableFrom, reliableTo, transform, reliableFrom.length)) return null;
-  return reliableTo;
+  return { points: reliableTo, quality };
 }
 
 function area(quad) {
@@ -120,20 +158,34 @@ function area(quad) {
   }, 0) / 2;
 }
 
-function projectCorners(width, height) {
+function projectCorners(referenceCorners, width, height) {
   const m = transform.data;
-  const projected = corners.map(({ x, y }) => {
+  const projected = referenceCorners.map(({ x, y }) => {
     const w = m[6] * x + m[7] * y + m[8];
     return { x: (m[0] * x + m[1] * y + m[2]) / w, y: (m[3] * x + m[4] * y + m[5]) / w };
   });
   if (projected.some((p, i) => !Number.isFinite(p.x + p.y) ||
-    Math.hypot(p.x - corners[i].x, p.y - corners[i].y) > Math.max(width, height) * .25)) return null;
-  const ratio = area(projected) / area(corners);
+    Math.hypot(p.x - referenceCorners[i].x, p.y - referenceCorners[i].y) > Math.max(width, height) * .25)) return null;
+  const ratio = area(projected) / area(referenceCorners);
   return ratio > .55 && ratio < 1.8 ? projected : null;
 }
 
 function trackedLocation([topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner]) {
   return { topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner };
+}
+
+function saveKeyframe(index) {
+  const image = previous.data[0];
+  const pyramid = keyframes[index]?.pyramid ?? createPyramid(image.cols, image.rows);
+  pyramid.data[0].data.set(image.data);
+  pyramid.build(pyramid.data[0]);
+  keyframes[index] = { pyramid, corners, points };
+}
+
+function matchFrame(reference, width, height, recovering = false) {
+  const tracked = fitSurface(reference.pyramid, reference.points, recovering);
+  const projected = tracked && projectCorners(reference.corners, width, height);
+  return projected ? { corners: projected, ...tracked } : null;
 }
 
 self.onmessage = ({ data: { pixels, width, height } }) => {
@@ -155,25 +207,39 @@ self.onmessage = ({ data: { pixels, width, height } }) => {
       [previous, current] = [current, previous];
       corners = quad;
       points = seeds;
+      saveKeyframe(0);
     }
     self.postMessage({ location: code.location, tracking: corners ? 'surface' : 'code' });
     return;
   }
 
   current.build(current.data[0]);
-  const tracked = fitSurface();
-  const projected = tracked && projectCorners(width, height);
-  if (!projected) {
-    // Keep the last good reference so a small interruption can be recovered.
+  const reference = { pyramid: previous, corners, points };
+  let match = matchFrame(reference, width, height, failedFrames > 0);
+  if (failedFrames > 0 && (match || failedFrames % 4 === 0)) {
+    // Try the initial and recent views while keeping the last accepted position.
+    for (const keyframe of keyframes) {
+      const candidate = matchFrame(keyframe, width, height, true);
+      if (candidate && (!match || candidate.quality > match.quality)) match = candidate;
+    }
+  }
+  if (!match) {
+    failedFrames++;
     self.postMessage(null);
     return;
   }
-  corners = projected;
-  points = tracked;
+  if (failedFrames > 0) seedIn = 0;
+  failedFrames = 0;
+  corners = match.corners;
+  points = match.points;
   if (--seedIn <= 0 || points.length < maxPoints / 2) {
     points = seedSurface(current.data[0], corners, points);
     seedIn = 5;
   }
   [previous, current] = [current, previous];
+  if (--saveIn <= 0) {
+    saveKeyframe(1);
+    saveIn = keyframeInterval;
+  }
   self.postMessage({ location: trackedLocation(corners), tracking: 'surface' });
 };

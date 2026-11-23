@@ -1,7 +1,7 @@
 import { estimateMarkerPose } from './marker-pose.js';
 
 const scanInterval = 65;
-const lostAfter = 425;
+const lostAfter = 900;
 const scanResolution = 540;
 
 export function trackTableMarker(video, onPose, onError) {
