@@ -1,4 +1,4 @@
-import { control, experiments, findExperiment, links, reagents, unknown } from './chemistry.js';
+import { control, experiments, findExperiment, links, reactionSeconds, reagents, unknown } from './chemistry.js';
 import { trackTableMarker } from './marker-tracker.js';
 
 const icons = {
@@ -219,7 +219,7 @@ function renderBench() {
   });
   for (const [id, allowed] of [['mix', complete && (!markerMode || hasTablePose())], ['xr-mix', complete && xrPlaced]]) {
     $(id).disabled = !allowed || mixing;
-    $(id).innerHTML = `${icon('flask')}${mixing ? 'Смешивание…' : result ? 'Повторить опыт' : 'Смешать реагенты'}`;
+    $(id).innerHTML = `${icon('flask')}${mixing ? 'Опыт идёт…' : result ? 'Повторить опыт' : 'Смешать реагенты'}`;
   }
   $('result').innerHTML = `<div class="result-label">${icon('observation')}Наблюдения</div>${result ? resultMarkup(result) : `<p class="result-description">${mixing ? 'Наблюдайте за изменениями в колбе.' : 'Здесь появятся результат и описание реакции.'}</p>`}`;
   $('xr-result').textContent = result ? [result.type || result.title, result.equation || result.description].join(' · ') : '';
@@ -242,7 +242,7 @@ function mix() {
     result = reaction ?? unknown;
     if (reaction) record(reaction);
     renderBench();
-  }, reducedMotion.matches ? 0 : 950);
+  }, reducedMotion.matches || !reaction || !viewport ? 0 : reactionSeconds * 1000);
 }
 $('mix').addEventListener('click', mix);
 $('xr-mix').addEventListener('click', mix);
@@ -270,7 +270,7 @@ function renderCards(id, items) {
   }));
 }
 renderCards('quick-experiments', experiments.slice(0, 3));
-renderCards('catalog', experiments);
+renderCards('catalog', [...experiments, control]);
 
 const allExperiments = new Map([...experiments, control].map((item) => [item.id, item]));
 let history = [];
@@ -325,6 +325,9 @@ $('sources').innerHTML = [
   ['American Chemical Society · лимонная кислота', links.citric],
   ['Американское химическое общество · капустный индикатор', links.indicator],
   ['University of Colorado Boulder · карбонат кальция', links.carbonate],
+  ['Yale-New Haven Teachers Institute · карбонаты и кислоты', links.acidCarbonates],
+  ['Американское химическое общество · мел и уксус', links.chalkAcid],
+  ['MIT Edgerton Center · растворимость мела', links.chalkWater],
   ['Innerscene · колба Эрленмейера, CC0', links.erlenmeyer],
   ['Innerscene · круглодонная колба, CC0', links.round],
 ].map(([label, url]) => `<li><a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a></li>`).join('');

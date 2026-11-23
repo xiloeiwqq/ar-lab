@@ -3,6 +3,7 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { assets, fills, primaryProfile, vesselScale } from './vessels.js';
 import { markerFocalLength } from './marker-pose.js';
+import { reactionSeconds } from './chemistry.js';
 const clearLiquid = '#929ad8';
 const purpleLiquid = '#9e69e2';
 const neutral = new T.Color(clearLiquid);
@@ -214,9 +215,10 @@ export function createViewport(container, stage, reducedMotion) {
   let reaction;
   vessel.add(current, currentFill.group);
 
-  const bubbleGeometry = new T.SphereGeometry(1, 10, 8);
-  const bubbleMaterial = new T.MeshBasicMaterial({
-    color: '#e6e5ff', transparent: true, opacity: .67, depthWrite: false,
+  const bubbleGeometry = new T.SphereGeometry(1, 14, 10);
+  const bubbleMaterial = new T.MeshPhongMaterial({
+    color: '#d7faff', emissive: '#29748d', specular: '#ffffff', shininess: 85,
+    transparent: true, opacity: .78, depthWrite: false,
   });
   const bubbles = Array.from({ length: 37 }, (_, index) => {
     const mesh = new T.Mesh(bubbleGeometry, bubbleMaterial);
@@ -225,14 +227,16 @@ export function createViewport(container, stage, reducedMotion) {
     vessel.add(mesh);
     return {
       mesh, angle: index * 2.39996, distance: .15 + ((index * 29) % 61) / 100,
-      delay: ((index * 47) % 100) / 100, speed: .55 + ((index * 13) % 45) / 100,
-      size: .012 + ((index * 7) % 13) / 620,
+      delay: .5 + ((index * 47) % 100) / 50,
+      cycle: 2.1 + ((index * 13) % 45) / 38,
+      size: .024 + ((index * 7) % 13) / 250,
     };
   });
   const grainMaterial = new T.MeshStandardMaterial({ color: '#fff7ff', roughness: .85 });
   const grains = Array.from({ length: 31 }, (_, i) => {
     const mesh = new T.Mesh(bubbleGeometry, grainMaterial);
-    mesh.scale.setScalar(.012 + (i % 5) * .002);
+    mesh.scale.setScalar(.016 + (i % 5) * .006);
+    mesh.renderOrder = 6;
     mesh.visible = false;
     vessel.add(mesh);
     return mesh;
@@ -243,6 +247,30 @@ export function createViewport(container, stage, reducedMotion) {
   pour.renderOrder = 5;
   pour.visible = false;
   vessel.add(pour);
+
+  const ripples = Array.from({ length: 4 }, () => {
+    const mesh = torus(1, .022, '#e4faff', .6);
+    mesh.renderOrder = 6;
+    mesh.visible = false;
+    vessel.add(mesh);
+    return mesh;
+  });
+  const inkMaterial = new T.MeshBasicMaterial({ transparent: true, opacity: .4, depthWrite: false });
+  const inkDrops = Array.from({ length: 12 }, () => {
+    const mesh = new T.Mesh(bubbleGeometry, inkMaterial);
+    mesh.renderOrder = 3;
+    mesh.visible = false;
+    vessel.add(mesh);
+    return mesh;
+  });
+  const chalkGeometry = new T.DodecahedronGeometry(1);
+  const chalkPieces = Array.from({ length: 6 }, (_, i) => {
+    const mesh = new T.Mesh(chalkGeometry, grainMaterial);
+    mesh.rotation.set(i * .8, i * 1.2, i * .4);
+    mesh.renderOrder = 3;
+    vessel.add(mesh);
+    return mesh;
+  });
 
   function setColor(color) {
     for (const part of [currentFill.body, currentFill.surface]) {
@@ -258,12 +286,13 @@ export function createViewport(container, stage, reducedMotion) {
     setColor(sourceTint);
     currentFill.sediment.visible = false;
     for (const { mesh } of bubbles) mesh.visible = false;
-    for (const mesh of grains) mesh.visible = false;
+    for (const mesh of [...grains, ...ripples, ...inkDrops]) mesh.visible = false;
+    drawChalk(mixture.includes('chalk') ? 1 : 0);
     pour.visible = false;
   }
   function startReaction(item) {
     reaction = item;
-    animationStart = performance.now();
+    animationStart = item ? performance.now() : null;
   }
 
   async function selectVessel(id, stillCurrent) {
@@ -300,41 +329,100 @@ export function createViewport(container, stage, reducedMotion) {
     currentFill = liquidModel(fills[id]);
     vessel.add(current, currentFill.group);
     setColor(sourceTint);
+    if (animationStart !== null) animateMixture();
+    else if (reaction) drawReaction(reactionSeconds, reducedMotion.matches);
+    else drawChalk(mixture.includes('chalk') ? 1 : 0);
   }
 
   const tint = new T.Color();
+  const cloudy = new T.Color('#e0ddf0');
+  const targetTint = new T.Color();
+  const smoothstep = T.MathUtils.smoothstep;
+
+  function drawChalk(amount) {
+    const { spec } = currentFill;
+    for (const [i, mesh] of chalkPieces.entries()) {
+      const size = (.042 + (i % 3) * .022) * amount;
+      mesh.visible = size > .004;
+      mesh.scale.set(size * 1.25, size, size);
+      const radius = (spec.sedimentRadius ?? spec.radius) * (.20 + (i % 3) * .20);
+      mesh.position.set(Math.cos(i * 2.4) * radius, spec.base + size * .75, Math.sin(i * 2.4) * radius);
+    }
+  }
+
+  function drawBubbles(elapsed, spec, still) {
+    for (const { mesh, angle, distance, delay, cycle, size } of bubbles) {
+      const age = elapsed - delay;
+      const phase = still ? delay / 3.5 : (age % cycle) / cycle;
+      const strength = still ? 1 : smoothstep(elapsed, .25, 2.5) * (1 - smoothstep(elapsed, 9.5, reactionSeconds));
+      mesh.visible = reaction.gas && (still || (age >= 0 && strength > .01 && phase < .96));
+      if (!mesh.visible) continue;
+      const swell = smoothstep(phase, 0, .25) * (1 - smoothstep(phase, .80, .97));
+      const radius = distance * spec.radius * (.42 + phase * .54);
+      const wobble = angle + Math.sin(phase * 9 + angle) * .35;
+      const scale = size * swell * (.4 + .6 * strength);
+      mesh.position.set(Math.cos(wobble) * radius, T.MathUtils.lerp(spec.base, spec.top + .025, phase), Math.sin(wobble) * radius);
+      mesh.scale.set(scale, scale * (1 + .30 * Math.sin(phase * 16)), scale);
+    }
+  }
+
+  function drawReaction(elapsed, still) {
+    const { spec, sediment } = currentFill;
+    const settles = reaction.precipitate || reaction.settles;
+    const pourAmount = smoothstep(elapsed, 0, .35) * (1 - smoothstep(elapsed, 1.05, 1.8));
+    pour.visible = !still && pourAmount > .01;
+    pour.scale.set(1.4, pourAmount, 1.4);
+    pour.position.y = spec.top + 1.77 * pourAmount / 2;
+    const blended = still ? 1 : smoothstep(elapsed, 1.2, 10.5);
+    const clouds = settles ? smoothstep(elapsed, .65, 3.3) * (1 - smoothstep(elapsed, 6, 13.5)) : 0;
+    targetTint.set(reaction.color ?? sourceTint);
+    setColor(tint.copy(sourceTint).lerp(targetTint, blended).lerp(cloudy, clouds * .6));
+    const bed = still ? 1 : smoothstep(elapsed, 4.2, 13.2);
+    sediment.visible = settles && bed > .01;
+    sediment.scale.set(.75 + .25 * bed, bed, .75 + .25 * bed);
+    for (const [i, mesh] of grains.entries()) {
+      const arrival = 9.4 + (i % 7) * .55;
+      const progress = smoothstep(elapsed, 2.4 + (i % 6) * .38, arrival);
+      mesh.visible = settles && !still && elapsed > .8 + (i % 4) * .2 && elapsed < arrival;
+      if (!mesh.visible) continue;
+      const angle = i * 2.4 + Math.sin(elapsed * 1.8 + i) * (1 - progress) * .34;
+      const radius = T.MathUtils.lerp(spec.radius * .78, (spec.sedimentRadius ?? spec.radius) * .84, progress) * (.35 + (i % 7) / 11);
+      mesh.position.set(Math.sin(angle) * radius, T.MathUtils.lerp(spec.top * (.65 + (i % 4) * .1), spec.base + .045, progress), Math.cos(angle) * radius);
+    }
+
+    const chalkAmount = reaction.dissolves || reaction.settles ? (still ? 0 : 1 - smoothstep(elapsed, 1, 12.2)) : 0;
+    drawChalk(chalkAmount);
+    drawBubbles(elapsed, spec, still);
+    for (const [i, mesh] of ripples.entries()) {
+      const age = elapsed - .6 - i * .46;
+      const phase = (age % 2.7) / 2.7;
+      const strength = 1 - smoothstep(elapsed, reaction.gas ? 8 : 3, reaction.gas ? 12.8 : 7.7);
+      mesh.visible = !still && age >= 0 && strength > 0;
+      if (!mesh.visible) continue;
+      mesh.position.y = spec.top + .012 + i * .002;
+      mesh.scale.setScalar(spec.radius * (.07 + .86 * phase));
+      mesh.material.opacity = .76 * strength * Math.sin(Math.PI * phase) ** 2;
+    }
+    inkMaterial.color.copy(targetTint);
+    inkMaterial.opacity = .42 * (1 - blended);
+    for (const [i, mesh] of inkDrops.entries()) {
+      const progress = smoothstep(elapsed, .95 + i * .17, 6.8 + i * .19);
+      mesh.visible = Boolean(reaction.color && !still && progress > 0 && progress < 1);
+      if (!mesh.visible) continue;
+      const angle = i * 2.4 + progress * 4.2;
+      const radius = spec.radius * .53 * progress;
+      const scale = (.075 + (i % 4) * .019) * Math.sin(Math.PI * progress);
+      mesh.position.set(Math.sin(angle) * radius, T.MathUtils.lerp(spec.top, spec.top * .51 + spec.base * .49, progress), Math.cos(angle) * radius);
+      mesh.scale.set(scale * 1.6, scale * .65, scale);
+    }
+  }
+
   function animateMixture() {
     if (animationStart === null) return;
-    const elapsed = (performance.now() - animationStart) / 1000;
+    const elapsed = Math.min(reactionSeconds, (performance.now() - animationStart) / 1000);
     const still = reducedMotion.matches;
-    const begin = still ? 1 : T.MathUtils.smoothstep(elapsed, .32, 1.35);
-    const finalColor = reaction?.color ?? (reaction?.precipitate ? '#cac6e2' : null);
-    if (finalColor) setColor(tint.copy(sourceTint).lerp(new T.Color(finalColor), begin));
-    pour.visible = !still && elapsed < .64;
-    pour.scale.y = Math.min(1, elapsed * 5);
-    const { spec, sediment } = currentFill;
-    if (reaction?.precipitate) {
-      sediment.visible = still || elapsed > 1.1;
-      sediment.scale.y = still ? 1 : T.MathUtils.smoothstep(elapsed, 1.1, 3.7);
-      for (const [i, mesh] of grains.entries()) {
-        mesh.visible = !still && elapsed > .5 && elapsed < 4.1;
-        const level = T.MathUtils.smoothstep(elapsed, .8 + (i % 6) / 10, 3.8);
-        const r = spec.radius * (.23 + (i % 7) / 14);
-        mesh.position.set(Math.sin(i * 2.399) * r, T.MathUtils.lerp(spec.top * (.63 + (i % 4) / 13), spec.base + .045, level), Math.cos(i * 2.399) * r);
-      }
-    }
-    if (reaction?.gas) {
-      for (const { mesh, angle, distance, delay, speed, size } of bubbles) {
-        const age = still ? delay : elapsed - .12 - delay;
-        mesh.visible = age >= 0 && (still || elapsed < 6.2 - delay * 2.6);
-        if (!mesh.visible) continue;
-        const phase = still ? delay * .7 : (age * speed) % 1;
-        const radius = distance * spec.radius * (1 - phase * .77);
-        mesh.position.set(Math.sin(angle + phase) * radius, spec.base + phase * (spec.top + .82), Math.cos(angle + phase) * radius);
-        mesh.scale.setScalar(size * (.8 + phase));
-      }
-    }
-    if (elapsed > 6.3 || still) animationStart = null;
+    drawReaction(still ? reactionSeconds : elapsed, still);
+    if (elapsed >= reactionSeconds || still) animationStart = null;
   }
 
   const reticle = torus(.09, .0035, '#b6f895');
@@ -346,6 +434,7 @@ export function createViewport(container, stage, reducedMotion) {
   let session;
   let hits;
   let placed = false;
+  let xrOrientationSet = false;
   let placeRequested = false;
   let placement = 0;
   let anchor;
@@ -353,6 +442,9 @@ export function createViewport(container, stage, reducedMotion) {
   const surfaceTransform = new T.Matrix4();
   const markerPosition = new T.Vector3();
   const markerRotation = new T.Quaternion();
+  const tableRotation = new T.Quaternion();
+  const vesselHeading = new T.Quaternion();
+  const surfaceRotation = new T.Quaternion();
   const markerRight = new T.Vector3();
   const markerUp = new T.Vector3();
   const markerDown = new T.Vector3();
@@ -384,6 +476,7 @@ export function createViewport(container, stage, reducedMotion) {
     markerVideo = video;
     if (video) {
       vesselOffset.set(0, 0, 0);
+      vesselHeading.identity();
       root.scale.setScalar(vesselScale);
       root.visible = false;
       beginPlacementScene();
@@ -410,33 +503,36 @@ export function createViewport(container, stage, reducedMotion) {
     markerRotation.setFromRotationMatrix(surfaceTransform.makeBasis(markerRight, markerUp, markerDown));
     if (root.visible) {
       tableOrigin.lerp(markerPosition, .55);
-      root.quaternion.slerp(markerRotation, .55);
+      tableRotation.slerp(markerRotation, .55);
     } else {
       tableOrigin.copy(markerPosition);
-      root.quaternion.copy(markerRotation);
+      tableRotation.copy(markerRotation);
       root.visible = true;
     }
+    // The plane updates throughout a drag, but the flask keeps the same orientation.
+    if (dragId === undefined) root.quaternion.copy(tableRotation).multiply(vesselHeading);
     updateVesselPosition();
   }
 
   function updateVesselPosition() {
-    root.position.copy(vesselOffset).applyQuaternion(root.quaternion).add(tableOrigin);
+    root.position.copy(vesselOffset).applyQuaternion(tableRotation).add(tableOrigin);
   }
 
   function pointOnTable(event) {
     const rect = canvas.getBoundingClientRect();
     pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
     raycaster.setFromCamera(pointer, markerCamera);
-    markerUp.set(0, 1, 0).applyQuaternion(root.quaternion);
+    markerUp.set(0, 1, 0).applyQuaternion(tableRotation);
     floorPlane.setFromNormalAndCoplanarPoint(markerUp, tableOrigin);
     if (!raycaster.ray.intersectPlane(floorPlane, dragPoint)) return null;
-    dragRotation.copy(root.quaternion).invert();
+    dragRotation.copy(tableRotation).invert();
     return dragPoint.sub(tableOrigin).applyQuaternion(dragRotation);
   }
 
   function stopDrag(event) {
     if (dragId === undefined || (event && event.pointerId !== dragId)) return;
     const id = dragId;
+    vesselHeading.copy(tableRotation).invert().multiply(root.quaternion);
     dragId = undefined;
     if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   }
@@ -501,7 +597,11 @@ export function createViewport(container, stage, reducedMotion) {
   }
 
   function applySurfacePose(matrix) {
-    surfaceTransform.fromArray(matrix).decompose(root.position, root.quaternion, root.scale);
+    surfaceTransform.fromArray(matrix).decompose(root.position, surfaceRotation, root.scale);
+    if (!xrOrientationSet) {
+      root.quaternion.copy(surfaceRotation);
+      xrOrientationSet = true;
+    }
     root.scale.setScalar(vesselScale);
   }
 
@@ -552,6 +652,7 @@ export function createViewport(container, stage, reducedMotion) {
     });
     session = active;
     onState = onChange;
+    xrOrientationSet = false;
     clearPlacement();
     beginPlacementScene();
     active.addEventListener('end', () => finishXR(active), { once: true });
