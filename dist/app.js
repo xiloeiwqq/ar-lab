@@ -1,4 +1,5 @@
 import { control, experiments, findExperiment, links, reagents, unknown } from './chemistry.js';
+import { trackTableMarker } from './marker-tracker.js';
 
 const icons = {
   flask: '<path d="M9 3h6m-5 0v7L4.5 19a1.3 1.3 0 0 0 1.1 2h12.8a1.3 1.3 0 0 0 1.1-2L14 10V3M7.5 15h9"/>',
@@ -46,6 +47,9 @@ let busyAR = false;
 let stream;
 let cameraRequest = 0;
 let cameraPending = false;
+let markerMode = false;
+let markerVisible = false;
+let stopTracking;
 let resumeCameraAfterXR = false;
 let vesselRequest = 0;
 let currentPage;
@@ -57,8 +61,6 @@ const feed = $('camera-feed');
 const overlay = $('xr-overlay');
 const mobileMenu = $('mobile-menu');
 const mobileToggle = $('mobile-toggle');
-const quickLookLinks = [$('open-quick-look'), $('mobile-quick-look')];
-const quickLook = navigator.maxTouchPoints > 0 && quickLookLinks[0].relList.supports('ar');
 const mobilePanes = [...document.querySelectorAll('[data-mobile-pane]')];
 const mobileControls = [
   ['reagent-panel', 'mobile-bench'],
@@ -101,8 +103,9 @@ function updateMobileActions() {
   $('mobile-camera').hidden = !inLab || !feed.hidden;
   $('mobile-camera').disabled = cameraPending;
   $('mobile-result').hidden = !inLab || !result;
-  $('mobile-ar').hidden = !inLab || quickLook;
-  $('mobile-quick-look').hidden = !inLab || !quickLook;
+  $('mobile-ar').hidden = !inLab || markerMode;
+  $('open-ar').hidden = markerMode;
+  $('reset-view').hidden = markerMode;
 }
 
 function placeMobileControls() {
@@ -214,7 +217,7 @@ function renderBench() {
     select.value = selected[index] ?? '';
     for (const option of select.options) option.disabled = Boolean(option.value) && option.value === selected[1 - index];
   });
-  for (const [id, allowed] of [['mix', complete], ['xr-mix', complete && xrPlaced]]) {
+  for (const [id, allowed] of [['mix', complete && (!markerMode || markerVisible)], ['xr-mix', complete && xrPlaced]]) {
     $(id).disabled = !allowed || mixing;
     $(id).innerHTML = `${icon('flask')}${mixing ? 'Смешивание…' : result ? 'Повторить опыт' : 'Смешать реагенты'}`;
   }
@@ -226,7 +229,7 @@ function resultMarkup(item) {
   return `<h3>${item.type || item.title}</h3>${item.equation ? `<p class="equation">${item.equation}</p>` : ''}<p class="result-description">${item.description}</p>${item.source ? `<a class="result-source" href="${item.source}" target="_blank" rel="noopener noreferrer">Источник опыта</a>` : ''}`;
 }
 function mix() {
-  if (mixing || !selected.every(Boolean)) return;
+  if (mixing || !selected.every(Boolean) || (markerMode && !markerVisible)) return;
   const reaction = findExperiment(selected);
   result = null;
   mixing = true;
@@ -332,12 +335,12 @@ function stageMessage(message) {
 }
 function sceneStatus() {
   if (feed.hidden) return '3D-сцена';
-  return xrSupport === false && !quickLook ? 'Камера · размещение AR недоступно' : 'Камера';
+  if (markerMode) return markerVisible ? 'Колба на QR-коде' : 'Положите QR-код на стол и наведите камеру';
+  return 'Камера';
 }
 async function changeVessel() {
   const request = ++vesselRequest;
   const id = $('vessel').value;
-  if (quickLook) updateQuickLookModel();
   if (!viewport) return;
   try {
     if (id !== 'simulation') stageMessage('Загрузка модели…');
@@ -346,7 +349,6 @@ async function changeVessel() {
   } catch (error) {
     if (request !== vesselRequest) return;
     $('vessel').value = 'simulation';
-    if (quickLook) updateQuickLookModel();
     await viewport.selectVessel('simulation', () => true);
     stageMessage('Не удалось загрузить модель');
     console.error(error);
@@ -396,6 +398,47 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+function stopMarkerMode() {
+  stopTracking?.();
+  stopTracking = undefined;
+  if (!markerMode) return;
+  markerMode = false;
+  markerVisible = false;
+  stage.classList.remove('marker-mode');
+  viewport?.setMarkerVideo(null);
+  renderBench();
+}
+
+function activateMarkerTracking() {
+  if (!markerMode || feed.hidden || stopTracking) return;
+  const failed = () => {
+    stopMarkerMode();
+    stageMessage('Не удалось запустить отслеживание QR-кода');
+  };
+  try {
+    stopTracking = trackTableMarker(feed, (pose) => {
+      viewport.setMarkerPose(pose);
+      if (markerVisible === Boolean(pose)) return;
+      markerVisible = Boolean(pose);
+      stageMessage(sceneStatus());
+      renderBench();
+    }, failed);
+    viewport.setMarkerVideo(feed);
+    stage.classList.add('marker-mode');
+    stageMessage(sceneStatus());
+  } catch {
+    failed();
+  }
+}
+
+async function startMarkerAR() {
+  if (currentPage !== 'lab') return;
+  markerMode = true;
+  renderBench();
+  if (feed.hidden) await showCamera();
+  else activateMarkerTracking();
+}
+
 function closeCamera() {
   cameraRequest++;
   cameraPending = false;
@@ -403,6 +446,7 @@ function closeCamera() {
   stream = null;
   feed.srcObject = null;
   feed.hidden = true;
+  stopMarkerMode();
   stage.classList.remove('camera-mode');
   $('close-camera').hidden = true;
   stageMessage('3D-сцена');
@@ -411,6 +455,7 @@ function closeCamera() {
 async function showCamera() {
   if (cameraPending || stream || currentPage !== 'lab') return;
   if (!navigator.mediaDevices?.getUserMedia) {
+    stopMarkerMode();
     stageMessage('Камера доступна на HTTPS или localhost');
     return;
   }
@@ -432,6 +477,7 @@ async function showCamera() {
     stage.classList.add('camera-mode');
     $('close-camera').hidden = false;
     stageMessage(sceneStatus());
+    activateMarkerTracking();
     if (document.activeElement === $('mobile-camera')) mobileToggle.focus({ preventScroll: true });
     if (!mobileLayout.matches) stage.scrollIntoView({ block: 'nearest' });
   } catch (error) {
@@ -483,7 +529,7 @@ function onXRState(state) {
   renderBench();
 }
 async function openAR() {
-  if (busyAR || !overlay.hidden || !viewport) return;
+  if (busyAR || !overlay.hidden || !viewport || markerMode) return;
   if (mobileLayout.matches) setMobileMenu(false, true);
   busyAR = true;
   try {
@@ -497,16 +543,15 @@ async function openAR() {
         resumeCameraAfterXR = restoreCamera && !overlay.hidden;
       } catch (error) {
         onXRState('ended');
-        if (restoreCamera || (!mobileLayout.matches && error.name === 'NotSupportedError')) await showCamera();
         if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+          if (restoreCamera) await showCamera();
           stageMessage('Запуск AR не разрешён');
         } else {
-          stageMessage('Размещение в AR недоступно');
+          await startMarkerAR();
         }
       }
     } else {
-      if (!mobileLayout.matches && !stream) await showCamera();
-      if (stream || mobileLayout.matches) stageMessage('Размещение в AR недоступно в этом браузере');
+      await startMarkerAR();
     }
   } finally {
     busyAR = false;
@@ -514,23 +559,6 @@ async function openAR() {
 }
 $('open-ar').addEventListener('click', openAR);
 $('mobile-ar').addEventListener('click', openAR);
-
-function updateQuickLookModel() {
-  const file = `assets/${$('vessel').value}.usdz`;
-  for (const link of quickLookLinks) link.setAttribute('href', file);
-}
-
-if (quickLook) {
-  $('open-ar').hidden = true;
-  $('open-quick-look').hidden = false;
-  $('help-ar').textContent = 'Нажмите «Поставить колбу», выберите «AR» в окне Safari и наведите камеру на стол. Чтобы смешать реагенты, закройте просмотр и вернитесь в лабораторию.';
-  updateQuickLookModel();
-  for (const link of quickLookLinks) {
-    link.addEventListener('click', () => {
-      if (stream || cameraPending) closeCamera();
-    });
-  }
-}
 
 $('xr-close').addEventListener('click', () => viewport?.endXR());
 overlay.addEventListener('beforexrselect', (event) => {
@@ -554,5 +582,5 @@ try {
   console.error(error);
   if (feed.hidden && !cameraPending) stageMessage('WebGL недоступен');
   $('stage-error').hidden = false;
-  for (const id of ['vessel', 'open-ar', 'reset-view', 'fullscreen']) $(id).disabled = true;
+  for (const id of ['vessel', 'open-ar', 'mobile-ar', 'reset-view', 'fullscreen']) $(id).disabled = true;
 }

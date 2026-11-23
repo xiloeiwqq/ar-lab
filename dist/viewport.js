@@ -2,6 +2,7 @@ import * as T from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { assets, fills, primaryProfile, vesselScale } from './vessels.js';
+import { markerFocalLength } from './marker-pose.js';
 const clearLiquid = '#929ad8';
 const purpleLiquid = '#9e69e2';
 const neutral = new T.Color(clearLiquid);
@@ -139,6 +140,8 @@ export function createViewport(container, stage, reducedMotion) {
 
   const scene = new T.Scene();
   const camera = new T.PerspectiveCamera(33, 1, .025, 70);
+  const markerCamera = new T.PerspectiveCamera(45, 1, .025, 70);
+  let markerVideo = null;
   const orbit = new OrbitControls(camera, renderer.domElement);
   orbit.enableDamping = true;
   orbit.enablePan = false;
@@ -293,7 +296,7 @@ export function createViewport(container, stage, reducedMotion) {
     });
     current = model;
     contactHeight = modelBounds.setFromObject(current, true).min.y;
-    if (session) vessel.position.y = -contactHeight;
+    if (session || markerVideo) vessel.position.y = -contactHeight;
     currentFill = liquidModel(fills[id]);
     vessel.add(current, currentFill.group);
     setColor(sourceTint);
@@ -348,15 +351,71 @@ export function createViewport(container, stage, reducedMotion) {
   let anchor;
   let onState;
   const surfaceTransform = new T.Matrix4();
+  const markerPosition = new T.Vector3();
+  const markerRotation = new T.Quaternion();
+  const markerRight = new T.Vector3();
+  const markerUp = new T.Vector3();
+  const markerDown = new T.Vector3();
+  let displayWidth = 0;
+  let displayHeight = 0;
+
+  function updateMarkerProjection() {
+    const { videoWidth, videoHeight } = markerVideo;
+    if (!videoWidth || !videoHeight || !displayWidth || !displayHeight) return;
+    const cover = Math.max(displayWidth / videoWidth, displayHeight / videoHeight);
+    const focal = markerFocalLength(videoWidth, videoHeight) * cover;
+    markerCamera.aspect = displayWidth / displayHeight;
+    markerCamera.fov = T.MathUtils.radToDeg(2 * Math.atan(displayHeight / (2 * focal)));
+    markerCamera.updateProjectionMatrix();
+  }
+
+  function setMarkerVideo(video) {
+    if (markerVideo === video) return;
+    markerVideo = video;
+    if (video) {
+      root.scale.setScalar(vesselScale);
+      root.visible = false;
+      beginPlacementScene();
+      updateMarkerProjection();
+    } else {
+      restoreWorkbench();
+    }
+  }
+
+  function setMarkerPose(pose) {
+    if (!markerVideo) return;
+    if (!pose) {
+      root.visible = false;
+      return;
+    }
+    updateMarkerProjection();
+    markerPosition.fromArray(pose.position);
+    markerRight.fromArray(pose.right).normalize();
+    markerDown.fromArray(pose.down);
+    markerUp.crossVectors(markerDown, markerRight).normalize();
+    markerDown.crossVectors(markerRight, markerUp).normalize();
+    markerRotation.setFromRotationMatrix(surfaceTransform.makeBasis(markerRight, markerUp, markerDown));
+    if (root.visible) {
+      root.position.lerp(markerPosition, .55);
+      root.quaternion.slerp(markerRotation, .55);
+    } else {
+      root.position.copy(markerPosition);
+      root.quaternion.copy(markerRotation);
+      root.visible = true;
+    }
+  }
 
   function resize() {
     const { width, height } = container.getBoundingClientRect();
     if (width < 1 || height < 1 || renderer.xr.isPresenting) return;
+    displayWidth = width;
+    displayHeight = height;
     camera.aspect = width / height;
     // Keep wide vessels in frame when the stage fills a tall phone screen.
     const portraitFov = 2 * Math.atan(Math.tan(T.MathUtils.degToRad(14)) / camera.aspect);
     camera.fov = camera.aspect < 1 ? Math.max(40, T.MathUtils.radToDeg(portraitFov)) : 33;
     camera.updateProjectionMatrix();
+    if (markerVideo) updateMarkerProjection();
     renderer.setSize(width, height, false);
   }
   new ResizeObserver(resize).observe(container);
@@ -403,6 +462,12 @@ export function createViewport(container, stage, reducedMotion) {
     hits = null;
     session = null;
     clearPlacement();
+    restoreWorkbench();
+    onState?.('ended');
+    requestAnimationFrame(resize);
+  }
+
+  function restoreWorkbench() {
     root.position.set(0, 0, 0);
     root.quaternion.identity();
     root.scale.setScalar(1);
@@ -411,8 +476,13 @@ export function createViewport(container, stage, reducedMotion) {
     contactShadow.visible = false;
     orbit.enabled = true;
     base.visible = true;
-    onState?.('ended');
-    requestAnimationFrame(resize);
+  }
+
+  function beginPlacementScene() {
+    vessel.position.y = -contactHeight;
+    contactShadow.visible = true;
+    base.visible = false;
+    orbit.enabled = false;
   }
 
   async function startXR(overlay, onChange) {
@@ -424,10 +494,7 @@ export function createViewport(container, stage, reducedMotion) {
     session = active;
     onState = onChange;
     clearPlacement();
-    vessel.position.y = -contactHeight;
-    contactShadow.visible = true;
-    base.visible = false;
-    orbit.enabled = false;
+    beginPlacementScene();
     active.addEventListener('end', () => finishXR(active), { once: true });
     active.addEventListener('select', requestPlacement);
     try {
@@ -483,13 +550,13 @@ export function createViewport(container, stage, reducedMotion) {
     if (space && hits) updatePlacement(frame, space);
     if (!frame) {
       if (stage.closest('[hidden]')) return;
-      orbit.update();
+      if (!markerVideo) orbit.update();
     }
     animateMixture();
-    renderer.render(scene, camera);
+    renderer.render(scene, markerVideo ? markerCamera : camera);
   });
 
-  return { resetView, setMixture, startReaction, selectVessel, startXR, endXR: () => session?.end(), requestPlacement, moveVessel };
+  return { resetView, setMixture, startReaction, selectVessel, startXR, endXR: () => session?.end(), requestPlacement, moveVessel, setMarkerVideo, setMarkerPose };
 }
 
 
